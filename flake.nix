@@ -95,6 +95,11 @@
               // additionalHooks;
             };
 
+            toolNameWidth = builtins.foldl' (
+              maxWidth: t: builtins.max maxWidth (builtins.stringLength t.name)
+            ) 0 tools;
+            toolLabelWidth = toolNameWidth + 1;
+
             toolBannerScript = pkgs.lib.concatMapStrings (
               t:
               let
@@ -102,7 +107,7 @@
               in
               ''
                 if command -v ${t.bin} >/dev/null 2>&1; then
-                  printf "  $CYAN ${t.name}:$RESET\t${colorVar}%s$RESET\n" "$(${t.bin} ${t.versionCmd})"
+                  printf "  $CYAN %-${toString toolLabelWidth}s$RESET ${colorVar}%s$RESET\n" "${t.name}:" "$(${t.bin} ${t.versionCmd})"
                 fi
               ''
             ) tools;
@@ -129,6 +134,12 @@
                 CYAN='\033[1;36m'
                 YELLOW='\033[1;33m'
                 BLUE='\033[1;34m'
+                RED='\033[1;31m'
+                MAGENTA='\033[1;35m'
+                WHITE='\033[1;37m'
+                GRAY='\033[0;90m'
+                BOLD='\033[1m'
+                UNDERLINE='\033[4m'
                 RESET='\033[0m'
 
                 printf "\n$GREEN 🚀 Dev shell ready$RESET\n\n"
