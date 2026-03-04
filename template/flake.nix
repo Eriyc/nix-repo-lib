@@ -54,6 +54,12 @@
             };
 
             additionalHooks = {
+              tests = {
+                enable = true;
+                entry = "echo 'No tests defined yet.'"; # replace with your test command
+                pass_filenames = false;
+                stages = [ "pre-push" ];
+              };
               # my-hook = {
               #   enable = true;
               #   entry = "${pkgs.some-tool}/bin/some-tool";
