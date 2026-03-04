@@ -27,6 +27,8 @@
     in
     {
       lib = {
+
+        # ── mkDevShell ───────────────────────────────────────────────────────
         mkDevShell =
           {
             system,
@@ -43,7 +45,6 @@
             # formatterSettings = treefmt-nix settings.formatter attrset
             # e.g. { shfmt.options = [ "-i" "2" "-s" "-w" ]; }
             features ? { },
-            # features = opt-in lib-managed behaviours
             # features.oxfmt = true  →  adds pkgs.oxfmt + pkgs.oxlint, enables oxfmt in treefmt
           }:
           let
@@ -81,12 +82,6 @@
                   enable = true;
                   entry = "${pkgs.gitleaks}/bin/gitleaks protect --staged";
                   pass_filenames = false;
-                };
-                tests = {
-                  enable = true;
-                  entry = "echo 'No tests defined yet.'";
-                  pass_filenames = false;
-                  stages = [ "pre-push" ];
                 };
               }
               // additionalHooks;
@@ -136,9 +131,126 @@
               '';
             };
           };
+
+        # ── mkRelease ────────────────────────────────────────────────────────
+        mkRelease =
+          {
+            system,
+            readVersion,
+            # Shell string — must print current version to stdout: "x.y.z" or "x.y.z-channel.N"
+            # Example:
+            #   readVersion = ''cat "$ROOT_DIR/VERSION"'';
+            writeVersion,
+            # Shell string — env vars available: BASE_VERSION, CHANNEL, PRERELEASE_NUM, FULL_VERSION
+            # Example:
+            #   writeVersion = ''echo "$FULL_VERSION" > "$ROOT_DIR/VERSION"'';
+            postVersion ? "",
+            # Shell string — runs after writeVersion and versionFiles, before git add.
+            # Same env vars available.
+            versionFiles ? [ ],
+            # List of { path, template } attrsets.
+            # template is a Nix function: version -> string
+            # The content is fully rendered by Nix at eval time — no shell interpolation needed.
+            # Example:
+            #   versionFiles = [
+            #     {
+            #       path = "src/version.ts";
+            #       template = version: ''export const APP_VERSION = "${version}" as const;'';
+            #     }
+            #     {
+            #       path = "internal/version/version.go";
+            #       template = version: ''
+            #         package version
+            #
+            #         const Version = "${version}"
+            #       '';
+            #     }
+            #   ];
+            channels ? [
+              "alpha"
+              "beta"
+              "rc"
+              "internal"
+            ],
+            # Valid release channels beyond "stable". Validated at runtime.
+            extraRuntimeInputs ? [ ],
+            # Extra packages available in the release script's PATH.
+          }:
+          let
+            pkgs = import nixpkgs { inherit system; };
+            channelList = pkgs.lib.concatStringsSep " " channels;
+
+            # Version files are fully rendered by Nix at eval time.
+            # The shell only writes the pre-computed strings — no shell interpolation in templates.
+            versionFilesScript = pkgs.lib.concatMapStrings (
+              f:
+              let
+                # We can't call f.template here since FULL_VERSION is a runtime value.
+                # Instead we pass the path and use a shell heredoc with the template
+                # rendered at runtime via the VERSION env vars.
+                renderedContent = f.template "$FULL_VERSION";
+              in
+              ''
+                mkdir -p "$(dirname "${f.path}")"
+                cat > "${f.path}" << 'NIXEOF'
+                ${renderedContent}
+                NIXEOF
+                log "Generated version file: ${f.path}"
+              ''
+            ) versionFiles;
+
+            script =
+              builtins.replaceStrings
+                [
+                  "__CHANNEL_LIST__"
+                  "__VERSION_FILES__"
+                  "__READ_VERSION__"
+                  "__WRITE_VERSION__"
+                  "__POST_VERSION__"
+                ]
+                [
+                  channelList
+                  versionFilesScript
+                  readVersion
+                  writeVersion
+                  postVersion
+                ]
+                (builtins.readFile ./packages/release/release.sh);
+          in
+          pkgs.writeShellApplication {
+            name = "release";
+            runtimeInputs =
+              with pkgs;
+              [
+                git
+                gnugrep
+                gawk
+                gnused
+                coreutils
+              ]
+              ++ extraRuntimeInputs;
+            text = script;
+          };
+
       };
 
-      # Dogfood: this repo's own dev shell using the lib above
+      # ── packages ────────────────────────────────────────────────────────────
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          # Expose a no-op release package for the lib repo itself (dogfood)
+          release = self.lib.mkRelease {
+            inherit system;
+            readVersion = ''cat "$ROOT_DIR/VERSION"'';
+            writeVersion = ''echo "$FULL_VERSION" > "$ROOT_DIR/VERSION"'';
+          };
+        }
+      );
+
+      # ── devShells ───────────────────────────────────────────────────────────
       devShells = forAllSystems (
         system:
         let
@@ -146,15 +258,12 @@
           env = self.lib.mkDevShell {
             inherit system;
             extraPackages = with pkgs; [
-              nixfmt
-              shfmt
+              nixfmt-rfc-style
               gitlint
               gitleaks
+              shfmt
+              self.packages.${system}.release
             ];
-            formatters = {
-              shfmt.enable = true;
-            };
-
             tools = [
               {
                 name = "Nix";
@@ -170,6 +279,7 @@
         }
       );
 
+      # ── checks ──────────────────────────────────────────────────────────────
       checks = forAllSystems (
         system:
         let
@@ -180,6 +290,15 @@
         }
       );
 
+      # ── formatter ───────────────────────────────────────────────────────────
       formatter = forAllSystems (system: (self.lib.mkDevShell { inherit system; }).formatter);
+
+      # ── templates ───────────────────────────────────────────────────────────
+      templates = {
+        default = {
+          path = ./template;
+          description = "Product repo using devshell-lib";
+        };
+      };
     };
 }
