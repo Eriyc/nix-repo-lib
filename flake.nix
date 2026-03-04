@@ -144,16 +144,13 @@
         mkRelease =
           {
             system,
-            readVersion,
-            # Shell string — must print current version to stdout: "x.y.z" or "x.y.z-channel.N"
-            # Example:
-            #   readVersion = ''cat "$ROOT_DIR/VERSION"'';
-            writeVersion,
-            # Shell string — env vars available: BASE_VERSION, CHANNEL, PRERELEASE_NUM, FULL_VERSION
-            # Example:
-            #   writeVersion = ''echo "$FULL_VERSION" > "$ROOT_DIR/VERSION"'';
+            # Source of truth is always $ROOT_DIR/VERSION.
+            # Format:
+            #   line 1: X.Y.Z
+            #   line 2: CHANNEL (stable|alpha|beta|rc|internal|...)
+            #   line 3: N (prerelease number, 0 for stable)
             postVersion ? "",
-            # Shell string — runs after writeVersion and versionFiles, before git add.
+            # Shell string — runs after VERSION + versionFiles are written, before git add.
             # Same env vars available.
             versionFiles ? [ ],
             # List of { path, template } attrsets.
@@ -219,8 +216,34 @@
                 [
                   channelList
                   versionFilesScript
-                  readVersion
-                  writeVersion
+                  ''
+                    if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
+                      echo "Error: missing $ROOT_DIR/VERSION" >&2
+                      exit 1
+                    fi
+
+                    base_line="$(sed -n '1p' "$ROOT_DIR/VERSION" | tr -d '\r')"
+                    channel_line="$(sed -n '2p' "$ROOT_DIR/VERSION" | tr -d '\r')"
+                    n_line="$(sed -n '3p' "$ROOT_DIR/VERSION" | tr -d '\r')"
+
+                    # Backward compatibility: old single-line format.
+                    if [[ -z "$channel_line" ]]; then
+                      printf '%s\n' "$base_line"
+                    elif [[ "$channel_line" == "stable" ]]; then
+                      printf '%s\n' "$base_line"
+                    else
+                      printf '%s-%s.%s\n' "$base_line" "$channel_line" "$n_line"
+                    fi
+                  ''
+                  ''
+                    channel_to_write="$CHANNEL"
+                    n_to_write="''${PRERELEASE_NUM:-1}"
+                    if [[ "$channel_to_write" == "stable" || -z "$channel_to_write" ]]; then
+                      channel_to_write="stable"
+                      n_to_write="0"
+                    fi
+                    printf '%s\n%s\n%s\n' "$BASE_VERSION" "$channel_to_write" "$n_to_write" > "$ROOT_DIR/VERSION"
+                  ''
                   postVersion
                 ]
                 (builtins.readFile ./packages/release/release.sh);
@@ -252,8 +275,6 @@
           # Expose a no-op release package for the lib repo itself (dogfood)
           release = self.lib.mkRelease {
             inherit system;
-            readVersion = ''cat "$ROOT_DIR/VERSION"'';
-            writeVersion = ''echo "$FULL_VERSION" > "$ROOT_DIR/VERSION"'';
           };
         }
       );
