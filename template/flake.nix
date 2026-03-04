@@ -97,7 +97,7 @@
 
       formatter = forAllSystems (system: (devshell-lib.lib.mkDevShell { inherit system; }).formatter);
 
-      # Optional: release command (nix run .#release)
+      # Optional: release command (`release`)
       #
       # The release script always updates VERSION first, then:
       #   1) runs release steps in order (file writes and scripts)

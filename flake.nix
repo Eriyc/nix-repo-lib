@@ -156,6 +156,26 @@
             # Unified list processed in declaration order:
             #   { file = "path/to/file"; content = ''...$FULL_VERSION...''; }  # write file
             #   { run = ''...shell snippet...''; }                               # run script
+            # Example:
+            #   release = [
+            #     {
+            #       file = "src/version.ts";
+            #       content = ''export const APP_VERSION = "$FULL_VERSION" as const;'';
+            #     }
+            #     {
+            #       file = "internal/version/version.go";
+            #       content = ''
+            #         package version
+            #
+            #         const Version = "$FULL_VERSION"
+            #       '';
+            #     }
+            #     {
+            #       run = ''
+            #         sed -E -i "s#^([[:space:]]*my-lib\\.url = \")github:org/my-lib[^"]*(\";)#\\1github:org/my-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/flake.nix"
+            #       '';
+            #     }
+            #   ];
             # Runtime env includes: BASE_VERSION, CHANNEL, PRERELEASE_NUM, FULL_VERSION, FULL_TAG.
             channels ? [
               "alpha"
