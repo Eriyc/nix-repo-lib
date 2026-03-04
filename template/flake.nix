@@ -4,7 +4,7 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
-    devshell-lib.url = "github:yourorg/devshell-lib";
+    devshell-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib";
     devshell-lib.inputs.nixpkgs.follows = "nixpkgs";
   };
 
