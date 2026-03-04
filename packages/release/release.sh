@@ -194,45 +194,50 @@ generate_version_files() {
 
 # ── version source (built-in) ──────────────────────────────────────────────
 
-do_read_version() {
-  if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
-    local highest_tag=""
-    while IFS= read -r raw_tag; do
-      local tag="${raw_tag#v}"
-      [[ $tag =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z]+\.[0-9]+)?$ ]] || continue
-
-      if [[ -z $highest_tag ]]; then
-        highest_tag="$tag"
-        continue
-      fi
-
-      local cmp_status=0
-      version_cmp "$tag" "$highest_tag" || cmp_status=$?
-      [[ $cmp_status -eq 1 ]] && highest_tag="$tag"
-    done < <(git tag --list)
-
-    [[ -z $highest_tag ]] && highest_tag="0.0.1"
-
-    parse_full_version "$highest_tag"
-    local channel_to_write="$CHANNEL"
-    local n_to_write="${PRERELEASE_NUM:-1}"
-    if [[ $channel_to_write == "stable" || -z $channel_to_write ]]; then
-      channel_to_write="stable"
-      n_to_write="0"
-    fi
-
-    printf '%s\n%s\n%s\n' "$BASE_VERSION" "$channel_to_write" "$n_to_write" > "$ROOT_DIR/VERSION"
-    log "Initialized $ROOT_DIR/VERSION from highest tag: v$highest_tag"
+# Initializes $ROOT_DIR/VERSION from git tags if it doesn't exist.
+# Must be called outside of any subshell so log output stays on stderr
+# and never contaminates the stdout of do_read_version.
+init_version_file() {
+  if [[ -f "$ROOT_DIR/VERSION" ]]; then
+    return 0
   fi
 
+  local highest_tag=""
+  while IFS= read -r raw_tag; do
+    local tag="${raw_tag#v}"
+    [[ $tag =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z]+\.[0-9]+)?$ ]] || continue
+
+    if [[ -z $highest_tag ]]; then
+      highest_tag="$tag"
+      continue
+    fi
+
+    local cmp_status=0
+    version_cmp "$tag" "$highest_tag" || cmp_status=$?
+    [[ $cmp_status -eq 1 ]] && highest_tag="$tag"
+  done < <(git tag --list)
+
+  [[ -z $highest_tag ]] && highest_tag="0.0.1"
+
+  parse_full_version "$highest_tag"
+  local channel_to_write="$CHANNEL"
+  local n_to_write="${PRERELEASE_NUM:-1}"
+  if [[ $channel_to_write == "stable" || -z $channel_to_write ]]; then
+    channel_to_write="stable"
+    n_to_write="0"
+  fi
+
+  printf '%s\n%s\n%s\n' "$BASE_VERSION" "$channel_to_write" "$n_to_write" > "$ROOT_DIR/VERSION"
+  log "Initialized $ROOT_DIR/VERSION from highest tag: v$highest_tag"
+}
+
+do_read_version() {
   local base_line channel_line n_line
   base_line="$(sed -n '1p' "$ROOT_DIR/VERSION" | tr -d '\r')"
   channel_line="$(sed -n '2p' "$ROOT_DIR/VERSION" | tr -d '\r')"
   n_line="$(sed -n '3p' "$ROOT_DIR/VERSION" | tr -d '\r')"
 
-  if [[ -z $channel_line ]]; then
-    printf '%s\n' "$base_line"
-  elif [[ $channel_line == "stable" ]]; then
+  if [[ -z $channel_line || $channel_line == "stable" ]]; then
     printf '%s\n' "$base_line"
   else
     printf '%s-%s.%s\n' "$base_line" "$channel_line" "$n_line"
@@ -264,6 +269,10 @@ main() {
   require_clean_git
   START_HEAD="$(git rev-parse HEAD)"
   trap revert_on_failure ERR
+
+  # Initialize VERSION file outside any subshell so log lines never
+  # bleed into the stdout capture below.
+  init_version_file
 
   local raw_version
   raw_version="$(do_read_version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z]+\.[0-9]+)?$' | tail -n1)"
