@@ -266,7 +266,11 @@ main() {
   trap revert_on_failure ERR
 
   local raw_version
-  raw_version="$(do_read_version)"
+  raw_version="$(do_read_version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z]+\.[0-9]+)?$' | tail -n1)"
+  if [[ -z $raw_version ]]; then
+    echo "Error: could not determine current version from VERSION source" >&2
+    exit 1
+  fi
   parse_full_version "$raw_version"
 
   log "Current: base=$BASE_VERSION channel=$CHANNEL pre=${PRERELEASE_NUM:-}"
