@@ -96,7 +96,7 @@
             };
 
             toolNameWidth = builtins.foldl' (
-              maxWidth: t: builtins.max maxWidth (builtins.stringLength t.name)
+              maxWidth: t: pkgs.lib.max maxWidth (builtins.stringLength t.name)
             ) 0 tools;
             toolLabelWidth = toolNameWidth + 1;
 
@@ -107,7 +107,8 @@
               in
               ''
                 if command -v ${t.bin} >/dev/null 2>&1; then
-                  printf "  $CYAN %-${toString toolLabelWidth}s$RESET ${colorVar}%s$RESET\n" "${t.name}:" "$(${t.bin} ${t.versionCmd})"
+                  version="$(${t.bin} ${t.versionCmd} 2>/dev/null | head -n 1 | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+                  printf "  $CYAN %-${toString toolLabelWidth}s$RESET ${colorVar}%s$RESET\n" "${t.name}:" "$version"
                 fi
               ''
             ) tools;
