@@ -192,17 +192,64 @@ generate_version_files() {
   __VERSION_FILES__
 }
 
-# ── user-provided hooks ────────────────────────────────────────────────────
+# ── version source (built-in) ──────────────────────────────────────────────
 
 do_read_version() {
-  :
-  __READ_VERSION__
+  if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
+    local highest_tag=""
+    while IFS= read -r raw_tag; do
+      local tag="${raw_tag#v}"
+      [[ $tag =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z]+\.[0-9]+)?$ ]] || continue
+
+      if [[ -z $highest_tag ]]; then
+        highest_tag="$tag"
+        continue
+      fi
+
+      local cmp_status=0
+      version_cmp "$tag" "$highest_tag" || cmp_status=$?
+      [[ $cmp_status -eq 1 ]] && highest_tag="$tag"
+    done < <(git tag --list)
+
+    [[ -z $highest_tag ]] && highest_tag="0.0.1"
+
+    parse_full_version "$highest_tag"
+    local channel_to_write="$CHANNEL"
+    local n_to_write="${PRERELEASE_NUM:-1}"
+    if [[ $channel_to_write == "stable" || -z $channel_to_write ]]; then
+      channel_to_write="stable"
+      n_to_write="0"
+    fi
+
+    printf '%s\n%s\n%s\n' "$BASE_VERSION" "$channel_to_write" "$n_to_write" > "$ROOT_DIR/VERSION"
+    log "Initialized $ROOT_DIR/VERSION from highest tag: v$highest_tag"
+  fi
+
+  local base_line channel_line n_line
+  base_line="$(sed -n '1p' "$ROOT_DIR/VERSION" | tr -d '\r')"
+  channel_line="$(sed -n '2p' "$ROOT_DIR/VERSION" | tr -d '\r')"
+  n_line="$(sed -n '3p' "$ROOT_DIR/VERSION" | tr -d '\r')"
+
+  if [[ -z $channel_line ]]; then
+    printf '%s\n' "$base_line"
+  elif [[ $channel_line == "stable" ]]; then
+    printf '%s\n' "$base_line"
+  else
+    printf '%s-%s.%s\n' "$base_line" "$channel_line" "$n_line"
+  fi
 }
 
 do_write_version() {
-  :
-  __WRITE_VERSION__
+  local channel_to_write="$CHANNEL"
+  local n_to_write="${PRERELEASE_NUM:-1}"
+  if [[ $channel_to_write == "stable" || -z $channel_to_write ]]; then
+    channel_to_write="stable"
+    n_to_write="0"
+  fi
+  printf '%s\n%s\n%s\n' "$BASE_VERSION" "$channel_to_write" "$n_to_write" > "$ROOT_DIR/VERSION"
 }
+
+# ── user-provided hook ─────────────────────────────────────────────────────
 
 do_post_version() {
   :
