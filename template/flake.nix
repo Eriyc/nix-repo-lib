@@ -79,12 +79,23 @@
         let
           pkgs = import nixpkgs { inherit system; };
           config = mkDevShellConfig pkgs;
-          env = devshell-lib.lib.mkDevShell ({ inherit system; } // config);
+          env = devshell-lib.lib.mkDevShell (
+            ({ inherit system; } // config)
+            // {
+              extraPackages = config.extraPackages ++ [ self.packages.${system}.release ];
+            }
+          );
         in
         {
           default = env.shell;
         }
       );
+
+      packages = forAllSystems (system: {
+        release = devshell-lib.lib.mkRelease {
+          inherit system;
+        };
+      });
 
       checks = forAllSystems (
         system:
@@ -107,7 +118,7 @@
         (devshell-lib.lib.mkDevShell ({ inherit system; } // config)).formatter
       );
 
-      # Optional: release command (`release`)
+      # Release command (`release`)
       #
       # The release script always updates VERSION first, then:
       #   1) runs release steps in order (file writes and scripts)
@@ -117,6 +128,7 @@
       # Runtime env vars available in release.run/postVersion:
       #   BASE_VERSION, CHANNEL, PRERELEASE_NUM, FULL_VERSION, FULL_TAG
       #
+      # To customize release behavior in your repo, edit:
       # packages = forAllSystems (
       #   system:
       #   {
