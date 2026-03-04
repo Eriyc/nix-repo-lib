@@ -248,7 +248,7 @@
           release = [
             {
               run = ''
-                sed -E -i "s#^([[:space:]]*devshell-lib\\.url = \")git\\+https://git\\.dgren\\.dev/eric/nix-flake-lib[^"]*(\";)#\\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/template/flake.nix"
+                sed -E -i "s#^([[:space:]]*devshell-lib\\.url = \")git\\+https://git\\.dgren\\.dev/eric/nix-flake-lib[^\"]*(\";)#\\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/template/flake.nix"
                 log "Updated template/flake.nix devshell-lib ref to $FULL_TAG"
               '';
             }
