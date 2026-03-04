@@ -301,10 +301,28 @@
       checks = forAllSystems (
         system:
         let
+          pkgs = import nixpkgs { inherit system; };
           env = self.lib.mkDevShell { inherit system; };
         in
         {
           inherit (env) pre-commit-check;
+          release-tests =
+            pkgs.runCommand "release-tests"
+              {
+                nativeBuildInputs = with pkgs; [
+                  bash
+                  git
+                  gnused
+                  coreutils
+                  gnugrep
+                ];
+              }
+              ''
+                export REPO_LIB_ROOT=${./.}
+                export HOME="$TMPDIR"
+                ${pkgs.bash}/bin/bash ${./tests/release.sh}
+                touch "$out"
+              '';
         }
       );
 

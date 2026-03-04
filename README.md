@@ -64,9 +64,11 @@ Run releases with:
 ```bash
 release
 release patch
+release beta
 release minor beta
 release stable
 release set 1.2.3
 ```
 
 The release script uses `./VERSION` as the source of truth and creates tags like `v1.2.3`.
+When switching from stable to a prerelease channel without an explicit bump (for example, `release beta`), it applies a patch bump automatically (for example, `1.0.0` -> `1.0.1-beta.1`).

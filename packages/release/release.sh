@@ -23,11 +23,12 @@ usage() {
 		"  (none)            bump patch, keep current channel" \
 		"  major/minor/patch bump the given part, keep current channel" \
 		"  stable / full     remove prerelease suffix" \
-		"  __CHANNEL_LIST__    switch channel (bumps prerelease number if same base+channel)" \
+		"  __CHANNEL_LIST__    switch channel (from stable, auto-bumps patch unless bump is specified)" \
 		"" \
 		"Examples:" \
 		"  ${cmd}                 # patch bump on current channel" \
 		"  ${cmd} minor           # minor bump on current channel" \
+		"  ${cmd} beta            # from stable: patch bump + beta.1" \
 		"  ${cmd} patch beta      # patch bump, switch to beta channel" \
 		"  ${cmd} rc              # switch to rc channel" \
 		"  ${cmd} stable          # promote to stable release" \
@@ -310,7 +311,7 @@ main() {
 		esac
 
 	else
-		local part="" target_channel=""
+		local part="" target_channel="" was_channel_only=0
 
 		case "$action" in
 		"") part="patch" ;;
@@ -331,6 +332,7 @@ main() {
 			if [[ $is_channel == 1 ]]; then
 				[[ -n ${1-} ]] && echo "Error: channel-only bump takes no second argument" >&2 && usage && exit 1
 				target_channel="$action"
+				was_channel_only=1
 			else
 				echo "Error: unknown argument '$action'" >&2
 				usage
@@ -342,6 +344,10 @@ main() {
 		[[ -z $target_channel ]] && target_channel="$CHANNEL"
 		[[ $target_channel == "full" ]] && target_channel="stable"
 		validate_channel "$target_channel"
+
+		if [[ -z $part && $was_channel_only -eq 1 && $CHANNEL == "stable" && $target_channel != "stable" ]]; then
+			part="patch"
+		fi
 
 		local old_base="$BASE_VERSION" old_channel="$CHANNEL" old_pre="$PRERELEASE_NUM"
 		[[ -n $part ]] && bump_base_version "$part"
