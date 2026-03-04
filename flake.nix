@@ -251,7 +251,7 @@
                 sed -E -i "s#^([[:space:]]*devshell-lib\\.url = \")git\\+https://git\\.dgren\\.dev/eric/nix-flake-lib[^\"]*(\";)#\\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/template/flake.nix"
                 log "Updated template/flake.nix devshell-lib ref to $FULL_TAG"
 
-                sed -E -i "s#(nix flake new myapp -t ')git\\+https://git\\.dgren\\.dev/eric/nix-flake-lib[^']*(#default' --refresh)#\\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/README.md"
+                sed -E -i "s|(nix flake new myapp -t ')git\\+https://git\\.dgren\\.dev/eric/nix-flake-lib[^']*(#default' --refresh)|\\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\\2|" "$ROOT_DIR/README.md"
                 sed -E -i "s#^([[:space:]]*inputs\\.devshell-lib\\.url = \")git\\+https://git\\.dgren\\.dev/eric/nix-flake-lib[^\"]*(\";)#\\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/README.md"
                 log "Updated README.md devshell-lib refs to $FULL_TAG"
               '';
