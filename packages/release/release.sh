@@ -9,7 +9,7 @@ CREATED_TAG=""
 
 # ── logging ────────────────────────────────────────────────────────────────
 
-log() { echo "[release] $*"; }
+log() { echo "[release] $*" >&2; }
 
 usage() {
   local cmd
