@@ -147,9 +147,14 @@
             inherit system;
             extraPackages = with pkgs; [
               nixfmt
+              shfmt
               gitlint
               gitleaks
             ];
+            formatters = {
+              shfmt.enable = true;
+            };
+
             tools = [
               {
                 name = "Nix";
