@@ -4,7 +4,7 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
-    devshell-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib";
+    devshell-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v0.0.2";
     devshell-lib.inputs.nixpkgs.follows = "nixpkgs";
   };
 
@@ -96,5 +96,50 @@
       );
 
       formatter = forAllSystems (system: (devshell-lib.lib.mkDevShell { inherit system; }).formatter);
+
+      # Optional: release command (nix run .#release)
+      #
+      # The release script always updates VERSION first, then:
+      #   1) runs release steps in order (file writes and scripts)
+      #   2) runs postVersion hook
+      #   3) formats, stages, commits, tags, and pushes
+      #
+      # Runtime env vars available in release.run/postVersion:
+      #   BASE_VERSION, CHANNEL, PRERELEASE_NUM, FULL_VERSION, FULL_TAG
+      #
+      # packages = forAllSystems (
+      #   system:
+      #   {
+      #     release = devshell-lib.lib.mkRelease {
+      #       inherit system;
+      #
+      #       release = [
+      #         {
+      #           file = "src/version.ts";
+      #           content = ''
+      #             export const APP_VERSION = "$FULL_VERSION" as const;
+      #           '';
+      #         }
+      #         {
+      #           file = "internal/version/version.go";
+      #           content = ''
+      #             package version
+      #
+      #             const Version = "$FULL_VERSION"
+      #           '';
+      #         }
+      #         {
+      #           run = ''
+      #             sed -E -i "s#^([[:space:]]*my-lib\\.url = \")github:org/my-lib[^"]*(\";)#\\1github:org/my-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/flake.nix"
+      #           '';
+      #         }
+      #       ];
+      #
+      #       postVersion = ''
+      #         echo "Released $FULL_TAG"
+      #       '';
+      #     };
+      #   }
+      # );
     };
 }
