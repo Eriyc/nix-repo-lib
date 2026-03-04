@@ -16,14 +16,14 @@ usage() {
   cmd="$(basename "$0")"
   printf '%s\n' \
     "Usage:" \
-    "  ${cmd} [major|minor|patch] [stable|${channelList}]" \
+    "  ${cmd} [major|minor|patch] [stable|__CHANNEL_LIST__]" \
     "  ${cmd} set <version>" \
     "" \
     "Bump types:" \
     "  (none)            bump patch, keep current channel" \
     "  major/minor/patch bump the given part, keep current channel" \
     "  stable / full     remove prerelease suffix" \
-    "  ${channelList}    switch channel (bumps prerelease number if same base+channel)" \
+    "  __CHANNEL_LIST__    switch channel (bumps prerelease number if same base+channel)" \
     "" \
     "Examples:" \
     "  ${cmd}                 # patch bump on current channel" \
@@ -64,9 +64,9 @@ parse_base_version() {
     echo "Error: invalid base version '$v' (expected x.y.z)" >&2
     exit 1
   fi
-  MAJOR="''${BASH_REMATCH[1]}"
-  MINOR="''${BASH_REMATCH[2]}"
-  PATCH="''${BASH_REMATCH[3]}"
+  MAJOR="${BASH_REMATCH[1]}"
+  MINOR="${BASH_REMATCH[2]}"
+  PATCH="${BASH_REMATCH[3]}"
 }
 
 parse_full_version() {
@@ -75,11 +75,11 @@ parse_full_version() {
   PRERELEASE_NUM=""
 
   if [[ $v =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([a-zA-Z]+)\.([0-9]+)$ ]]; then
-    BASE_VERSION="''${BASH_REMATCH[1]}"
-    CHANNEL="''${BASH_REMATCH[2]}"
-    PRERELEASE_NUM="''${BASH_REMATCH[3]}"
+    BASE_VERSION="${BASH_REMATCH[1]}"
+    CHANNEL="${BASH_REMATCH[2]}"
+    PRERELEASE_NUM="${BASH_REMATCH[3]}"
   elif [[ $v =~ ^([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-    BASE_VERSION="''${BASH_REMATCH[1]}"
+    BASE_VERSION="${BASH_REMATCH[1]}"
   else
     echo "Error: invalid version '$v' (expected x.y.z or x.y.z-channel.N)" >&2
     exit 1
@@ -90,7 +90,7 @@ parse_full_version() {
 validate_channel() {
   local ch="$1"
   [[ $ch == "stable" ]] && return 0
-  local valid_channels="${channelList}"
+  local valid_channels="__CHANNEL_LIST__"
   for c in $valid_channels; do
     [[ $ch == "$c" ]] && return 0
   done
@@ -106,14 +106,14 @@ version_cmp() {
 
   local base1="" pre1="" base2="" pre2=""
   if [[ $v1 =~ ^([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
-    base1="''${BASH_REMATCH[1]}"
-    pre1="''${BASH_REMATCH[2]}"
+    base1="${BASH_REMATCH[1]}"
+    pre1="${BASH_REMATCH[2]}"
   else
     base1="$v1"
   fi
   if [[ $v2 =~ ^([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
-    base2="''${BASH_REMATCH[1]}"
-    pre2="''${BASH_REMATCH[2]}"
+    base2="${BASH_REMATCH[1]}"
+    pre2="${BASH_REMATCH[2]}"
   else
     base2="$v2"
   fi
@@ -150,14 +150,14 @@ bump_base_version() {
     exit 1
     ;;
   esac
-  BASE_VERSION="''${MAJOR}.''${MINOR}.''${PATCH}"
+  BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 }
 
 compute_full_version() {
   if [[ $CHANNEL == "stable" || -z $CHANNEL ]]; then
     FULL_VERSION="$BASE_VERSION"
   else
-    FULL_VERSION="''${BASE_VERSION}-''${CHANNEL}.''${PRERELEASE_NUM:-1}"
+    FULL_VERSION="${BASE_VERSION}-${CHANNEL}.${PRERELEASE_NUM:-1}"
   fi
   export BASE_VERSION CHANNEL PRERELEASE_NUM FULL_VERSION
 }
@@ -188,27 +188,31 @@ validate_commit_message() {
 # ── version file generation ────────────────────────────────────────────────
 
 generate_version_files() {
-  ${versionFilesScript}
+  :
+  __VERSION_FILES__
 }
 
 # ── user-provided hooks ────────────────────────────────────────────────────
 
 do_read_version() {
-  ${readVersion}
+  :
+  __READ_VERSION__
 }
 
 do_write_version() {
-  ${writeVersion}
+  :
+  __WRITE_VERSION__
 }
 
 do_post_version() {
-  ${postVersion}
+  :
+  __POST_VERSION__
 }
 
 # ── main ───────────────────────────────────────────────────────────────────
 
 main() {
-  [[ ''${1-} == "-h" || ''${1-} == "--help" ]] && usage && exit 0
+  [[ ${1-} == "-h" || ${1-} == "--help" ]] && usage && exit 0
 
   require_clean_git
   START_HEAD="$(git rev-parse HEAD)"
@@ -218,13 +222,13 @@ main() {
   raw_version="$(do_read_version)"
   parse_full_version "$raw_version"
 
-  log "Current: base=$BASE_VERSION channel=$CHANNEL pre=''${PRERELEASE_NUM:-}"
+  log "Current: base=$BASE_VERSION channel=$CHANNEL pre=${PRERELEASE_NUM:-}"
 
-  local action="''${1-}"
+  local action="${1-}"
   shift || true
 
   if [[ $action == "set" ]]; then
-    local newv="''${1-}"
+    local newv="${1-}"
     [[ -z $newv ]] && echo "Error: 'set' requires a version argument" >&2 && exit 1
     compute_full_version
     local current_full="$FULL_VERSION"
@@ -251,20 +255,20 @@ main() {
     "") part="patch" ;;
     major | minor | patch)
       part="$action"
-      target_channel="''${1-}"
+      target_channel="${1-}"
       ;;
     stable | full)
-      [[ -n ''${1-} ]] && echo "Error: '$action' takes no second argument" >&2 && usage && exit 1
+      [[ -n ${1-} ]] && echo "Error: '$action' takes no second argument" >&2 && usage && exit 1
       target_channel="stable"
       ;;
     *)
       # check if action is a valid channel
       local is_channel=0
-      for c in ${channelList}; do
+      for c in __CHANNEL_LIST__; do
         [[ $action == "$c" ]] && is_channel=1 && break
       done
       if [[ $is_channel == 1 ]]; then
-        [[ -n ''${1-} ]] && echo "Error: channel-only bump takes no second argument" >&2 && usage && exit 1
+        [[ -n ${1-} ]] && echo "Error: channel-only bump takes no second argument" >&2 && usage && exit 1
         target_channel="$action"
       else
         echo "Error: unknown argument '$action'" >&2

@@ -32,6 +32,8 @@
           env = devshell-lib.lib.mkDevShell {
             inherit system;
 
+            # includeStandardPackages = false; # opt out of nixfmt/gitlint/gitleaks/shfmt defaults
+
             extraPackages = with pkgs; [
               # add your tools here, e.g.:
               # go

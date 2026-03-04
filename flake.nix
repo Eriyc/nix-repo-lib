@@ -36,6 +36,7 @@
             extraShellHook ? "",
             additionalHooks ? { },
             tools ? [ ],
+            includeStandardPackages ? true,
             # tools = list of { name, bin, versionCmd, color? }
             # e.g. { name = "Bun"; bin = "${pkgs.bun}/bin/bun"; versionCmd = "--version"; color = "YELLOW"; }
             formatters ? { },
@@ -49,6 +50,13 @@
           }:
           let
             pkgs = import nixpkgs { inherit system; };
+            standardPackages = with pkgs; [
+              nixfmt
+              gitlint
+              gitleaks
+              shfmt
+            ];
+            selectedStandardPackages = pkgs.lib.optionals includeStandardPackages standardPackages;
 
             oxfmtEnabled = features.oxfmt or false;
             oxfmtPackages = pkgs.lib.optionals oxfmtEnabled [
@@ -106,7 +114,7 @@
             formatter = treefmtEval.config.build.wrapper;
 
             shell = pkgs.mkShell {
-              packages = extraPackages ++ oxfmtPackages;
+              packages = selectedStandardPackages ++ extraPackages ++ oxfmtPackages;
 
               buildInputs = pre-commit-check.enabledPackages;
 
@@ -114,7 +122,7 @@
                 ${pre-commit-check.shellHook}
 
                 if [ -t 1 ]; then
-                  command -v tput >/dev/null 2>&1 && tput clear || printf '\033c'
+                  # command -v tput >/dev/null 2>&1 && tput clear || printf '\033c'
                 fi
 
                 GREEN='\033[1;32m'
@@ -258,10 +266,6 @@
           env = self.lib.mkDevShell {
             inherit system;
             extraPackages = with pkgs; [
-              nixfmt-rfc-style
-              gitlint
-              gitleaks
-              shfmt
               self.packages.${system}.release
             ];
             tools = [
