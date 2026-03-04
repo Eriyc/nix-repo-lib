@@ -1,0 +1,45 @@
+# .gitleaks.toml
+title = "gitleaks config"
+
+[extend]
+# extend the default ruleset rather than replacing it
+useDefault = true
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+  # lock files often contain hashes that trip up gitleaks
+  '''flake\.lock''',
+  '''package-lock\.json''',
+  '''yarn\.lock''',
+  '''bun\.lockb''',
+]
+regexes = [
+  # nix store hashes
+  '''/nix/store/[a-z0-9]{32}-''',
+]
+
+[[rules]]
+id = "generic-api-key-extended"
+description = "Extended generic API key detection"
+regex = '''(?i)(api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-]{16,}['"]?'''
+entropy = 3.5
+tags = ["api", "key", "token"]
+
+[[rules]]
+id = "private-key-file"
+description = "Private key files"
+regex = '''-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY'''
+tags = ["key", "private"]
+
+[[rules]]
+id = "environment-file"
+description = "Committed .env files"
+path = '''(^|/)\.env(\.[a-z]+)?$'''
+regex = '''.+'''
+tags = ["env"]
+[rules.allowlist]
+  paths = [
+    # allow .env.example and .env.template
+    '''\.env\.(example|template|sample)$''',
+  ]

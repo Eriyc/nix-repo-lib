@@ -1,0 +1,8 @@
+.direnv/
+.pre-commit-config.yaml
+
+bazel-*
+build/
+dist/
+
+node_modules/
