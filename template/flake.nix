@@ -23,62 +23,63 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+
+      mkDevShellConfig = pkgs: {
+        # includeStandardPackages = false; # opt out of nixfmt/gitlint/gitleaks/shfmt defaults
+
+        extraPackages = with pkgs; [
+          # add your tools here, e.g.:
+          # go
+          # bun
+          # rustc
+        ];
+
+        features = {
+          # oxfmt = true;  # enables oxfmt + oxlint from nixpkgs
+        };
+
+        formatters = {
+          # shfmt.enable = true;
+          # gofmt.enable = true;
+        };
+
+        formatterSettings = {
+          # shfmt.options = [ "-i" "2" "-s" "-w" ];
+          # oxfmt.includes = [ "*.ts" "*.tsx" "*.js" "*.json" ];
+        };
+
+        additionalHooks = {
+          tests = {
+            enable = true;
+            entry = "echo 'No tests defined yet.'"; # replace with your test command
+            pass_filenames = false;
+            stages = [ "pre-push" ];
+          };
+          # my-hook = {
+          #   enable = true;
+          #   entry = "${pkgs.some-tool}/bin/some-tool";
+          #   pass_filenames = false;
+          # };
+        };
+
+        tools = [
+          # { name = "Bun";   bin = "${pkgs.bun}/bin/bun";    versionCmd = "--version"; color = "YELLOW"; }
+          # { name = "Go";    bin = "${pkgs.go}/bin/go";       versionCmd = "version";   color = "CYAN";   }
+          # { name = "Rust";  bin = "${pkgs.rustc}/bin/rustc"; versionCmd = "--version"; color = "YELLOW"; }
+        ];
+
+        extraShellHook = ''
+          # any repo-specific shell setup here
+        '';
+      };
     in
     {
       devShells = forAllSystems (
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          env = devshell-lib.lib.mkDevShell {
-            inherit system;
-
-            # includeStandardPackages = false; # opt out of nixfmt/gitlint/gitleaks/shfmt defaults
-
-            extraPackages = with pkgs; [
-              # add your tools here, e.g.:
-              # go
-              # bun
-              # rustc
-            ];
-
-            features = {
-              # oxfmt = true;  # enables oxfmt + oxlint from nixpkgs
-            };
-
-            formatters = {
-              # shfmt.enable = true;
-              # gofmt.enable = true;
-            };
-
-            formatterSettings = {
-              # shfmt.options = [ "-i" "2" "-s" "-w" ];
-              # oxfmt.includes = [ "*.ts" "*.tsx" "*.js" "*.json" ];
-            };
-
-            additionalHooks = {
-              tests = {
-                enable = true;
-                entry = "echo 'No tests defined yet.'"; # replace with your test command
-                pass_filenames = false;
-                stages = [ "pre-push" ];
-              };
-              # my-hook = {
-              #   enable = true;
-              #   entry = "${pkgs.some-tool}/bin/some-tool";
-              #   pass_filenames = false;
-              # };
-            };
-
-            tools = [
-              # { name = "Bun";   bin = "${pkgs.bun}/bin/bun";    versionCmd = "--version"; color = "YELLOW"; }
-              # { name = "Go";    bin = "${pkgs.go}/bin/go";       versionCmd = "version";   color = "CYAN";   }
-              # { name = "Rust";  bin = "${pkgs.rustc}/bin/rustc"; versionCmd = "--version"; color = "YELLOW"; }
-            ];
-
-            extraShellHook = ''
-              # any repo-specific shell setup here
-            '';
-          };
+          config = mkDevShellConfig pkgs;
+          env = devshell-lib.lib.mkDevShell ({ inherit system; } // config);
         in
         {
           default = env.shell;
@@ -88,14 +89,23 @@
       checks = forAllSystems (
         system:
         let
-          env = devshell-lib.lib.mkDevShell { inherit system; };
+          pkgs = import nixpkgs { inherit system; };
+          config = mkDevShellConfig pkgs;
+          env = devshell-lib.lib.mkDevShell ({ inherit system; } // config);
         in
         {
           inherit (env) pre-commit-check;
         }
       );
 
-      formatter = forAllSystems (system: (devshell-lib.lib.mkDevShell { inherit system; }).formatter);
+      formatter = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          config = mkDevShellConfig pkgs;
+        in
+        (devshell-lib.lib.mkDevShell ({ inherit system; } // config)).formatter
+      );
 
       # Optional: release command (`release`)
       #
