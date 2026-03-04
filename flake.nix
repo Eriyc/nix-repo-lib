@@ -122,8 +122,7 @@
                 ${pre-commit-check.shellHook}
 
                 if [ -t 1 ]; then
-                  :
-                  # command -v tput >/dev/null 2>&1 && tput clear || printf '\033c'
+                  command -v tput >/dev/null 2>&1 && tput clear || printf '\033c'
                 fi
 
                 GREEN='\033[1;32m'
@@ -151,27 +150,13 @@
             #   line 2: CHANNEL (stable|alpha|beta|rc|internal|...)
             #   line 3: N (prerelease number, 0 for stable)
             postVersion ? "",
-            # Shell string — runs after VERSION + versionFiles are written, before git add.
+            # Shell string — runs after VERSION + release steps are written/run, before git add.
             # Same env vars available.
-            versionFiles ? [ ],
-            # List of { path, template } attrsets.
-            # template is a Nix function: version -> string
-            # The content is fully rendered by Nix at eval time — no shell interpolation needed.
-            # Example:
-            #   versionFiles = [
-            #     {
-            #       path = "src/version.ts";
-            #       template = version: ''export const APP_VERSION = "${version}" as const;'';
-            #     }
-            #     {
-            #       path = "internal/version/version.go";
-            #       template = version: ''
-            #         package version
-            #
-            #         const Version = "${version}"
-            #       '';
-            #     }
-            #   ];
+            release ? [ ],
+            # Unified list processed in declaration order:
+            #   { file = "path/to/file"; content = ''...$FULL_VERSION...''; }  # write file
+            #   { run = ''...shell snippet...''; }                               # run script
+            # Runtime env includes: BASE_VERSION, CHANNEL, PRERELEASE_NUM, FULL_VERSION, FULL_TAG.
             channels ? [
               "alpha"
               "beta"
@@ -186,35 +171,34 @@
             pkgs = import nixpkgs { inherit system; };
             channelList = pkgs.lib.concatStringsSep " " channels;
 
-            # Version files are fully rendered by Nix at eval time.
-            # The shell only writes the pre-computed strings — no shell interpolation in templates.
-            versionFilesScript = pkgs.lib.concatMapStrings (
-              f:
-              let
-                # We can't call f.template here since FULL_VERSION is a runtime value.
-                # Instead we pass the path and use a shell heredoc with the template
-                # rendered at runtime via the VERSION env vars.
-                renderedContent = f.template "$FULL_VERSION";
-              in
-              ''
-                mkdir -p "$(dirname "${f.path}")"
-                cat > "${f.path}" << 'NIXEOF'
-                ${renderedContent}
-                NIXEOF
-                log "Generated version file: ${f.path}"
-              ''
-            ) versionFiles;
+            releaseStepsScript = pkgs.lib.concatMapStrings (
+              entry:
+              if entry ? file then
+                ''
+                  mkdir -p "$(dirname "${entry.file}")"
+                  cat > "${entry.file}" << NIXEOF
+                  ${entry.content}
+                  NIXEOF
+                  log "Generated version file: ${entry.file}"
+                ''
+              else if entry ? run then
+                ''
+                  ${entry.run}
+                ''
+              else
+                builtins.throw "release entry must have either 'file' or 'run'"
+            ) release;
 
             script =
               builtins.replaceStrings
                 [
                   "__CHANNEL_LIST__"
-                  "__VERSION_FILES__"
+                  "__RELEASE_STEPS__"
                   "__POST_VERSION__"
                 ]
                 [
                   channelList
-                  versionFilesScript
+                  releaseStepsScript
                   postVersion
                 ]
                 (builtins.readFile ./packages/release/release.sh);
@@ -237,18 +221,20 @@
       };
 
       # ── packages ────────────────────────────────────────────────────────────
-      packages = forAllSystems (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-        in
-        {
-          # Expose a no-op release package for the lib repo itself (dogfood)
-          release = self.lib.mkRelease {
-            inherit system;
-          };
-        }
-      );
+      packages = forAllSystems (system: {
+        # Expose a no-op release package for the lib repo itself (dogfood)
+        release = self.lib.mkRelease {
+          inherit system;
+          release = [
+            {
+              run = ''
+                sed -E -i "s#^([[:space:]]*devshell-lib\\.url = \")git\\+https://git\\.dgren\\.dev/eric/nix-flake-lib[^"]*(\";)#\\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/template/flake.nix"
+                log "Updated template/flake.nix devshell-lib ref to $FULL_TAG"
+              '';
+            }
+          ];
+        };
+      });
 
       # ── devShells ───────────────────────────────────────────────────────────
       devShells = forAllSystems (
