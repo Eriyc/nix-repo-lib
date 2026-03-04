@@ -16,7 +16,7 @@ Simple Nix flake library for:
 From your new project folder:
 
 ```bash
-nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v1.0.1#default' --refresh
+nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v1.0.2#default' --refresh
 ```
 
 ## Use the library (existing repo)
@@ -24,7 +24,7 @@ nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v1.0.1#
 Add this flake input:
 
 ```nix
-inputs.devshell-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v1.0.1";
+inputs.devshell-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v1.0.2";
 inputs.devshell-lib.inputs.nixpkgs.follows = "nixpkgs";
 ```
 
