@@ -82,7 +82,7 @@
               hooks = {
                 treefmt = {
                   enable = true;
-                  entry = "${treefmtEval.config.build.wrapper}/bin/treefmt";
+                  entry = "${treefmtEval.config.build.wrapper}/bin/treefmt --ci";
                   pass_filenames = true;
                 };
                 gitlint.enable = true;
