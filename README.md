@@ -33,6 +33,7 @@ Create your shell from `mkDevShell`:
 ```nix
 env = devshell-lib.lib.mkDevShell {
   inherit system;
+  src = ./.;
   extraPackages = [ ];
   tools = [ ];
   additionalHooks = { };

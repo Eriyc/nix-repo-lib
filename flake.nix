@@ -32,6 +32,7 @@
         mkDevShell =
           {
             system,
+            src ? ./.,
             extraPackages ? [ ],
             extraShellHook ? "",
             additionalHooks ? { },
@@ -78,7 +79,7 @@
             };
 
             pre-commit-check = git-hooks.lib.${system}.run {
-              src = ./.;
+              inherit src;
               hooks = {
                 treefmt = {
                   enable = true;

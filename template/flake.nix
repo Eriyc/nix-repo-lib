@@ -80,7 +80,13 @@
           pkgs = import nixpkgs { inherit system; };
           config = mkDevShellConfig pkgs;
           env = devshell-lib.lib.mkDevShell (
-            ({ inherit system; } // config)
+            (
+              {
+                inherit system;
+                src = ./.;
+              }
+              // config
+            )
             // {
               extraPackages = config.extraPackages ++ [ self.packages.${system}.release ];
             }
@@ -102,7 +108,13 @@
         let
           pkgs = import nixpkgs { inherit system; };
           config = mkDevShellConfig pkgs;
-          env = devshell-lib.lib.mkDevShell ({ inherit system; } // config);
+          env = devshell-lib.lib.mkDevShell (
+            {
+              inherit system;
+              src = ./.;
+            }
+            // config
+          );
         in
         {
           inherit (env) pre-commit-check;
@@ -115,7 +127,13 @@
           pkgs = import nixpkgs { inherit system; };
           config = mkDevShellConfig pkgs;
         in
-        (devshell-lib.lib.mkDevShell ({ inherit system; } // config)).formatter
+        (devshell-lib.lib.mkDevShell (
+          {
+            inherit system;
+            src = ./.;
+          }
+          // config
+        )).formatter
       );
 
       # Release command (`release`)
