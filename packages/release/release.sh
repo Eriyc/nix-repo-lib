@@ -22,8 +22,12 @@ usage() {
 		"Bump types:" \
 		"  (none)            bump patch, keep current channel" \
 		"  major/minor/patch bump the given part, keep current channel" \
-		"  stable / full     remove prerelease suffix" \
+		"  stable / full     remove prerelease suffix (only opt-in path to promote prerelease -> stable)" \
 		"  __CHANNEL_LIST__    switch channel (from stable, auto-bumps patch unless bump is specified)" \
+		"" \
+		"Safety rule:" \
+		"  If current version is prerelease (e.g. x.y.z-beta.N), promotion to stable is allowed only via 'stable' or 'full'." \
+		"  Commands like '${cmd} set x.y.z' or '${cmd} patch stable' are blocked from prerelease channels." \
 		"" \
 		"Examples:" \
 		"  ${cmd}                 # patch bump on current channel" \
@@ -31,7 +35,7 @@ usage() {
 		"  ${cmd} beta            # from stable: patch bump + beta.1" \
 		"  ${cmd} patch beta      # patch bump, switch to beta channel" \
 		"  ${cmd} rc              # switch to rc channel" \
-		"  ${cmd} stable          # promote to stable release" \
+		"  ${cmd} stable          # promote prerelease to stable (opt-in)" \
 		"  ${cmd} set 1.2.3" \
 		"  ${cmd} set 1.2.3-beta.1"
 }
@@ -283,6 +287,8 @@ main() {
 		exit 1
 	fi
 	parse_full_version "$raw_version"
+	compute_full_version
+	local current_full="$FULL_VERSION"
 
 	log "Current: base=$BASE_VERSION channel=$CHANNEL pre=${PRERELEASE_NUM:-}"
 
@@ -291,11 +297,14 @@ main() {
 
 	if [[ $action == "set" ]]; then
 		local newv="${1-}"
+		local current_channel="$CHANNEL"
 		[[ -z $newv ]] && echo "Error: 'set' requires a version argument" >&2 && exit 1
-		compute_full_version
-		local current_full="$FULL_VERSION"
 		parse_full_version "$newv"
 		validate_channel "$CHANNEL"
+		if [[ $current_channel != "stable" && $CHANNEL == "stable" ]]; then
+			echo "Error: from prerelease channel '$current_channel', promote using 'stable' or 'full' only" >&2
+			exit 1
+		fi
 		compute_full_version
 		local cmp_status=0
 		version_cmp "$FULL_VERSION" "$current_full" || cmp_status=$?
@@ -344,6 +353,10 @@ main() {
 		[[ -z $target_channel ]] && target_channel="$CHANNEL"
 		[[ $target_channel == "full" ]] && target_channel="stable"
 		validate_channel "$target_channel"
+		if [[ $CHANNEL != "stable" && $target_channel == "stable" && $action != "stable" && $action != "full" ]]; then
+			echo "Error: from prerelease channel '$CHANNEL', promote using 'stable' or 'full' only" >&2
+			exit 1
+		fi
 
 		if [[ -z $part && $was_channel_only -eq 1 && $CHANNEL == "stable" && $target_channel != "stable" ]]; then
 			part="patch"
@@ -366,6 +379,10 @@ main() {
 	fi
 
 	compute_full_version
+	if [[ $FULL_VERSION == "$current_full" ]]; then
+		echo "Version $FULL_VERSION is already current; nothing to do." >&2
+		exit 1
+	fi
 	log "Releasing $FULL_VERSION"
 
 	do_write_version
