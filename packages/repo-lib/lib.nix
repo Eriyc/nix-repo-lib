@@ -203,12 +203,12 @@ let
         close $in;
 
         my $regex = qr/$regex_src/ms;
-        $content =~ s/$regex/
+        $content =~ s{$regex}{
           my @cap = map { defined $_ ? $_ : q{} } ($1, $2, $3, $4, $5, $6, $7, $8, $9);
           my $result = $template;
-          $result =~ s/\\([1-9])/$cap[$1 - 1]/ge;
+          $result =~ s{\\([1-9])}{$cap[$1 - 1]}ge;
           $result;
-        /gems;
+        }gems;
 
         open my $out, q{>}, $path or die "failed to open $path for write: $!";
         print {$out} $content;
