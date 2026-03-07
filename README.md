@@ -15,7 +15,7 @@
 ## Use the template
 
 ```bash
-nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v2.1.0#default' --refresh
+nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v3.0.0#default' --refresh
 ```
 
 ## Use the library
@@ -23,7 +23,7 @@ nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v2.1.0#
 Add this flake input:
 
 ```nix
-inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v2.1.0";
+inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v3.0.0";
 inputs.repo-lib.inputs.nixpkgs.follows = "nixpkgs";
 ```
 
