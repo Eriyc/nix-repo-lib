@@ -4,194 +4,117 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
-    devshell-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v2.1.0";
-    devshell-lib.inputs.nixpkgs.follows = "nixpkgs";
+    repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v2.1.0";
+    repo-lib.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      devshell-lib,
+      repo-lib,
       ...
     }:
-    let
-      supportedSystems = [
-        "x86_64-linux"
-        "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
-      ];
-      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+    repo-lib.lib.mkRepo {
+      inherit self nixpkgs;
+      src = ./.;
 
-      mkDevShellConfig = pkgs: {
-        # includeStandardPackages = false; # opt out of nixfmt/gitlint/gitleaks/shfmt defaults
+      config = {
+        # includeStandardPackages = false;
 
-        extraPackages = with pkgs; [
-          # add your tools here, e.g.:
-          # go
-          # bun
-          # rustc
-        ];
-
-        features = {
-          # oxfmt = true;  # enables oxfmt + oxlint from nixpkgs
-        };
-
-        formatters = {
-          # shfmt.enable = true;
-          # gofmt.enable = true;
-        };
-
-        formatterSettings = {
-          # shfmt.options = [ "-i" "2" "-s" "-w" ];
-          # oxfmt.includes = [ "*.ts" "*.tsx" "*.js" "*.json" ];
-        };
-
-        additionalHooks = {
-          tests = {
-            enable = true;
-            entry = "echo 'No tests defined yet.'"; # replace with your test command
-            pass_filenames = false;
-            stages = [ "pre-push" ];
+        shell = {
+          env = {
+            # FOO = "bar";
           };
-          # my-hook = {
-          #   enable = true;
-          #   entry = "${pkgs.some-tool}/bin/some-tool";
-          #   pass_filenames = false;
+
+          extraShellText = ''
+            # any repo-specific shell setup here
+          '';
+
+          # Impure bootstrap is available as an explicit escape hatch.
+          # bootstrap = ''
+          #   export GOBIN="$PWD/.tools/bin"
+          #   export PATH="$GOBIN:$PATH"
+          # '';
+          # allowImpureBootstrap = true;
+        };
+
+        formatting = {
+          programs = {
+            # shfmt.enable = true;
+            # gofmt.enable = true;
+          };
+
+          settings = {
+            # shfmt.options = [ "-i" "2" "-s" "-w" ];
+          };
+        };
+
+        checks.tests = {
+          command = "echo 'No tests defined yet.'";
+          stage = "pre-push";
+          passFilenames = false;
+        };
+
+        release = {
+          steps = [
+            # {
+            #   writeFile = {
+            #     path = "src/version.ts";
+            #     text = ''
+            #       export const APP_VERSION = "$FULL_VERSION" as const;
+            #     '';
+            #   };
+            # }
+            # {
+            #   replace = {
+            #     path = "README.md";
+            #     regex = ''^(version = ")[^"]*(")$'';
+            #     replacement = ''\1$FULL_VERSION\2'';
+            #   };
+            # }
+          ];
+        };
+      };
+
+      perSystem =
+        {
+          pkgs,
+          system,
+          ...
+        }:
+        {
+          tools = [
+            (repo-lib.lib.tools.fromPackage {
+              name = "Nix";
+              package = pkgs.nix;
+              version.args = [ "--version" ];
+            })
+
+            # (repo-lib.lib.tools.fromPackage {
+            #   name = "Go";
+            #   package = pkgs.go;
+            #   version.args = [ "version" ];
+            #   banner.color = "CYAN";
+            # })
+          ];
+
+          shell.packages = [
+            self.packages.${system}.release
+            # pkgs.go
+            # pkgs.bun
+          ];
+
+          # checks.lint = {
+          #   command = "go test ./...";
+          #   stage = "pre-push";
+          #   runtimeInputs = [ pkgs.go ];
+          # };
+
+          # packages.my-tool = pkgs.writeShellApplication {
+          #   name = "my-tool";
+          #   text = ''echo hello'';
           # };
         };
-
-        tools = [
-          # { name = "Bun";   bin = "${pkgs.bun}/bin/bun";    versionCmd = "--version"; color = "YELLOW"; }
-          # { name = "Go";    bin = "${pkgs.go}/bin/go";       versionCmd = "version";   color = "CYAN";   }
-          # { name = "Rust";  bin = "${pkgs.rustc}/bin/rustc"; versionCmd = "--version"; color = "YELLOW"; }
-          # { name = "golangci-lint"; bin = "golangci-lint"; versionCmd = "version"; color = "YELLOW"; }
-        ];
-
-        preToolHook = ''
-          # runs before the ready banner + tool version logs
-          # useful for installing tools outside nixpkgs and updating PATH first
-          #
-          # export GOBIN="$PWD/.tools/bin"
-          # export PATH="$GOBIN:$PATH"
-          # if ! command -v golangci-lint >/dev/null 2>&1; then
-          #   go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          # fi
-        '';
-
-        extraShellHook = ''
-          # any repo-specific shell setup here
-        '';
-      };
-    in
-    {
-      devShells = forAllSystems (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-          config = mkDevShellConfig pkgs;
-          env = devshell-lib.lib.mkDevShell (
-            (
-              {
-                inherit system;
-                src = ./.;
-              }
-              // config
-            )
-            // {
-              extraPackages = config.extraPackages ++ [ self.packages.${system}.release ];
-            }
-          );
-        in
-        {
-          default = env.shell;
-        }
-      );
-
-      packages = forAllSystems (system: {
-        release = devshell-lib.lib.mkRelease {
-          inherit system;
-        };
-      });
-
-      checks = forAllSystems (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-          config = mkDevShellConfig pkgs;
-          env = devshell-lib.lib.mkDevShell (
-            {
-              inherit system;
-              src = ./.;
-            }
-            // config
-          );
-        in
-        {
-          inherit (env) pre-commit-check;
-        }
-      );
-
-      formatter = forAllSystems (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-          config = mkDevShellConfig pkgs;
-        in
-        (devshell-lib.lib.mkDevShell (
-          {
-            inherit system;
-            src = ./.;
-          }
-          // config
-        )).formatter
-      );
-
-      # Release command (`release`)
-      #
-      # The release script always updates VERSION first, then:
-      #   1) runs release steps in order (file writes and scripts)
-      #   2) runs postVersion hook
-      #   3) formats, stages, commits, tags, and pushes
-      #
-      # Runtime env vars available in release.run/postVersion:
-      #   BASE_VERSION, CHANNEL, PRERELEASE_NUM, FULL_VERSION, FULL_TAG
-      #
-      # To customize release behavior in your repo, edit:
-      # packages = forAllSystems (
-      #   system:
-      #   {
-      #     release = devshell-lib.lib.mkRelease {
-      #       inherit system;
-      #
-      #       release = [
-      #         {
-      #           file = "src/version.ts";
-      #           content = ''
-      #             export const APP_VERSION = "$FULL_VERSION" as const;
-      #           '';
-      #         }
-      #         {
-      #           file = "internal/version/version.go";
-      #           content = ''
-      #             package version
-      #
-      #             const Version = "$FULL_VERSION"
-      #           '';
-      #         }
-      #         {
-      #           run = ''
-      #             sed -E -i "s#^([[:space:]]*my-lib\\.url = \")github:org/my-lib[^"]*(\";)#\\1github:org/my-lib?ref=$FULL_TAG\\2#" "$ROOT_DIR/flake.nix"
-      #           '';
-      #         }
-      #       ];
-      #
-      #       postVersion = ''
-      #         echo "Released $FULL_TAG"
-      #       '';
-      #     };
-      #   }
-      # );
     };
 }

@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="${REPO_LIB_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 RELEASE_TEMPLATE="$ROOT_DIR/packages/release/release.sh"
+NIXPKGS_FLAKE_PATH="${NIXPKGS_FLAKE_PATH:-}"
 CURRENT_LOG=""
 
 fail() {
@@ -44,11 +45,20 @@ run_capture_ok() {
 
 make_release_script() {
 	local target="$1"
-	sed \
-		-e 's/__CHANNEL_LIST__/alpha beta rc internal/g' \
-		-e 's/__RELEASE_STEPS__/:/' \
-		-e 's/__POST_VERSION__/:/' \
-		"$RELEASE_TEMPLATE" >"$target"
+	make_release_script_with_content "$target" ":" ":"
+}
+
+make_release_script_with_content() {
+	local target="$1"
+	local release_steps="$2"
+	local post_version="$3"
+	local script
+
+	script="$(cat "$RELEASE_TEMPLATE")"
+	script="${script//__CHANNEL_LIST__/alpha beta rc internal}"
+	script="${script//__RELEASE_STEPS__/$release_steps}"
+	script="${script//__POST_VERSION__/$post_version}"
+	printf '%s' "$script" >"$target"
 	chmod +x "$target"
 }
 
@@ -110,6 +120,27 @@ EOF
 	chmod +x "$repo_dir/bin/nix"
 }
 
+prepare_case_repo_with_release_script() {
+	local repo_dir="$1"
+	local remote_dir="$2"
+	local release_steps="$3"
+	local post_version="$4"
+
+	setup_repo "$repo_dir" "$remote_dir"
+	make_release_script_with_content "$repo_dir/release" "$release_steps" "$post_version"
+
+	mkdir -p "$repo_dir/bin"
+	cat >"$repo_dir/bin/nix" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1-}" == "fmt" ]]; then
+	exit 0
+fi
+echo "unexpected nix invocation: $*" >&2
+exit 1
+EOF
+	chmod +x "$repo_dir/bin/nix"
+}
+
 run_release() {
 	local repo_dir="$1"
 	shift
@@ -117,6 +148,220 @@ run_release() {
 		cd "$repo_dir"
 		PATH="$repo_dir/bin:$PATH" ./release "$@"
 	)
+}
+
+run_expect_failure() {
+	local description="$1"
+	shift
+	if "$@" >>"$CURRENT_LOG" 2>&1; then
+		fail "$description (expected failure)"
+	fi
+}
+
+write_mk_repo_flake() {
+	local repo_dir="$1"
+	cat >"$repo_dir/flake.nix" <<EOF
+{
+  description = "mkRepo ok";
+
+  inputs = {
+    nixpkgs.url = "path:${NIXPKGS_FLAKE_PATH}";
+    repo-lib.url = "path:${ROOT_DIR}";
+    repo-lib.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { self, nixpkgs, repo-lib, ... }:
+    repo-lib.lib.mkRepo {
+      inherit self nixpkgs;
+      src = ./.;
+
+      config = {
+        checks.tests = {
+          command = "echo test";
+          stage = "pre-push";
+          passFilenames = false;
+        };
+
+        release = {
+          steps = [ ];
+        };
+      };
+
+      perSystem = { pkgs, system, ... }: {
+        tools = [
+          (repo-lib.lib.tools.fromPackage {
+            name = "Hello";
+            package = pkgs.hello;
+            exe = "hello";
+            version.args = [ "--version" ];
+          })
+        ];
+
+        shell.packages = [
+          self.packages.\${system}.release
+        ];
+
+        packages.example = pkgs.writeShellApplication {
+          name = "example";
+          text = ''
+            echo example
+          '';
+        };
+      };
+    };
+}
+EOF
+}
+
+write_tool_failure_flake() {
+	local repo_dir="$1"
+	cat >"$repo_dir/flake.nix" <<EOF
+{
+  description = "mkRepo tool failure";
+
+  inputs = {
+    nixpkgs.url = "path:${NIXPKGS_FLAKE_PATH}";
+    repo-lib.url = "path:${ROOT_DIR}";
+    repo-lib.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { self, nixpkgs, repo-lib, ... }:
+    repo-lib.lib.mkRepo {
+      inherit self nixpkgs;
+      src = ./.;
+
+      config.release = {
+        steps = [ ];
+      };
+
+      perSystem = { pkgs, ... }: {
+        tools = [
+          (repo-lib.lib.tools.fromPackage {
+            name = "Hello";
+            package = pkgs.hello;
+            exe = "hello";
+            version.args = [ "--definitely-invalid" ];
+          })
+        ];
+      };
+    };
+}
+EOF
+}
+
+write_impure_bootstrap_flake() {
+	local repo_dir="$1"
+	cat >"$repo_dir/flake.nix" <<EOF
+{
+  description = "mkRepo bootstrap validation";
+
+  inputs = {
+    nixpkgs.url = "path:${NIXPKGS_FLAKE_PATH}";
+    repo-lib.url = "path:${ROOT_DIR}";
+    repo-lib.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { self, nixpkgs, repo-lib, ... }:
+    repo-lib.lib.mkRepo {
+      inherit self nixpkgs;
+      src = ./.;
+
+      config.shell.bootstrap = ''
+        echo hi
+      '';
+    };
+}
+EOF
+}
+
+write_legacy_flake() {
+	local repo_dir="$1"
+	cat >"$repo_dir/flake.nix" <<EOF
+{
+  description = "legacy api";
+
+  inputs = {
+    nixpkgs.url = "path:${NIXPKGS_FLAKE_PATH}";
+    repo-lib.url = "path:${ROOT_DIR}";
+    repo-lib.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs =
+    { self, nixpkgs, repo-lib, ... }:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+    in
+    {
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          env = repo-lib.lib.mkDevShell {
+            inherit system;
+            nixpkgsInput = nixpkgs;
+            src = ./.;
+            extraPackages = [ self.packages.\${system}.release ];
+            tools = [
+              {
+                name = "Nix";
+                bin = "\${pkgs.nix}/bin/nix";
+                versionCmd = "--version";
+                color = "YELLOW";
+              }
+            ];
+          };
+        in
+        {
+          default = env.shell;
+        }
+      );
+
+      checks = forAllSystems (
+        system:
+        let
+          env = repo-lib.lib.mkDevShell {
+            inherit system;
+            nixpkgsInput = nixpkgs;
+            src = ./.;
+          };
+        in
+        {
+          inherit (env) pre-commit-check;
+        }
+      );
+
+      formatter = forAllSystems (
+        system:
+        (repo-lib.lib.mkDevShell {
+          inherit system;
+          nixpkgsInput = nixpkgs;
+          src = ./.;
+        }).formatter
+      );
+
+      packages = forAllSystems (system: {
+        release = repo-lib.lib.mkRelease {
+          inherit system;
+          nixpkgsInput = nixpkgs;
+        };
+      });
+    };
+}
+EOF
+}
+
+write_template_fixture() {
+	local repo_dir="$1"
+	sed \
+		-e "s|git+https://git.dgren.dev/eric/nix-flake-lib?ref=v[0-9.]*|path:${ROOT_DIR}|" \
+		-e "s|github:nixos/nixpkgs?ref=nixos-unstable|path:${NIXPKGS_FLAKE_PATH}|" \
+		"$ROOT_DIR/template/flake.nix" >"$repo_dir/flake.nix"
 }
 
 qc_version_cmp() {
@@ -646,12 +891,171 @@ run_patch_stable_from_prerelease_requires_full_case() {
 	echo "[test] PASS: $case_name" >&2
 }
 
+run_structured_release_steps_case() {
+	local case_name="structured release steps update files"
+	local release_steps
+	local post_version
+
+	read -r -d '' release_steps <<'EOF' || true
+target_path="$ROOT_DIR/generated/version.txt"
+mkdir -p "$(dirname "$target_path")"
+cat >"$target_path" << NIXEOF
+$FULL_VERSION
+NIXEOF
+log "Generated version file: generated/version.txt"
+
+target_path="$ROOT_DIR/notes.txt"
+REPO_LIB_STEP_REGEX=$(cat <<'NIXEOF'
+^version=.*$
+NIXEOF
+)
+REPO_LIB_STEP_REPLACEMENT=$(cat <<NIXEOF
+version=$FULL_VERSION
+NIXEOF
+)
+export REPO_LIB_STEP_REGEX REPO_LIB_STEP_REPLACEMENT
+perl -0pi -e 'my $regex = $ENV{"REPO_LIB_STEP_REGEX"}; my $replacement = $ENV{"REPO_LIB_STEP_REPLACEMENT"}; s/$regex/$replacement/gms;' "$target_path"
+log "Updated notes.txt"
+
+printf '%s\n' "$FULL_TAG" >"$ROOT_DIR/release.tag"
+EOF
+
+	read -r -d '' post_version <<'EOF' || true
+printf '%s\n' "$FULL_VERSION" >"$ROOT_DIR/post-version.txt"
+EOF
+
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/repo"
+	local remote_dir="$workdir/remote.git"
+	CURRENT_LOG="$workdir/case.log"
+
+	prepare_case_repo_with_release_script "$repo_dir" "$remote_dir" "$release_steps" "$post_version"
+	printf 'version=old\n' >"$repo_dir/notes.txt"
+	run_capture_ok "$case_name: setup commit failed" git -C "$repo_dir" add notes.txt
+	run_capture_ok "$case_name: setup commit failed" git -C "$repo_dir" commit -m "chore: add notes"
+
+	run_capture_ok "$case_name: release command failed" run_release "$repo_dir" patch
+
+	assert_eq "1.0.1" "$(version_from_file "$repo_dir")" "$case_name: VERSION mismatch"
+	assert_eq "1.0.1" "$(tr -d '\r' <"$repo_dir/generated/version.txt")" "$case_name: generated version file mismatch"
+	assert_eq "version=1.0.1" "$(tr -d '\r' <"$repo_dir/notes.txt")" "$case_name: replace step mismatch"
+	assert_eq "v1.0.1" "$(tr -d '\r' <"$repo_dir/release.tag")" "$case_name: run step mismatch"
+	assert_eq "1.0.1" "$(tr -d '\r' <"$repo_dir/post-version.txt")" "$case_name: postVersion mismatch"
+
+	if ! git -C "$repo_dir" tag --list | grep -qx "v1.0.1"; then
+		fail "$case_name: expected tag v1.0.1 was not created"
+	fi
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
+run_mk_repo_case() {
+	local case_name="mkRepo exposes outputs and auto-installs tools"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/mk-repo"
+	mkdir -p "$repo_dir"
+	write_mk_repo_flake "$repo_dir"
+	CURRENT_LOG="$workdir/mk-repo.log"
+
+	run_capture_ok "$case_name: flake show failed" nix flake show --json "$repo_dir"
+	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
+	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
+	assert_contains '"example"' "$CURRENT_LOG" "$case_name: missing merged package"
+
+	run_capture_ok "$case_name: tool package should be available in shell" nix develop "$repo_dir" -c hello --version
+	run_capture_ok "$case_name: release package should be available in shell" nix develop "$repo_dir" -c sh -c 'command -v release >/dev/null'
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
+run_mk_repo_tool_failure_case() {
+	local case_name="mkRepo required tools fail shell startup"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/tool-failure"
+	mkdir -p "$repo_dir"
+	write_tool_failure_flake "$repo_dir"
+	CURRENT_LOG="$workdir/tool-failure.log"
+
+	run_expect_failure "$case_name: shell startup should fail" nix develop "$repo_dir" -c true
+	assert_contains "probe failed" "$CURRENT_LOG" "$case_name: failure reason missing"
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
+run_impure_bootstrap_validation_case() {
+	local case_name="mkRepo rejects bootstrap without explicit opt-in"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/bootstrap-validation"
+	mkdir -p "$repo_dir"
+	write_impure_bootstrap_flake "$repo_dir"
+	CURRENT_LOG="$workdir/bootstrap-validation.log"
+
+	run_expect_failure "$case_name: evaluation should fail" nix flake show --json "$repo_dir"
+	assert_contains "allowImpureBootstrap" "$CURRENT_LOG" "$case_name: validation message missing"
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
+run_legacy_api_eval_case() {
+	local case_name="legacy mkDevShell and mkRelease still evaluate"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/legacy"
+	mkdir -p "$repo_dir"
+	write_legacy_flake "$repo_dir"
+	CURRENT_LOG="$workdir/legacy.log"
+
+	run_capture_ok "$case_name: flake show failed" nix flake show --json "$repo_dir"
+	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
+	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
+run_template_eval_case() {
+	local case_name="template flake evaluates with mkRepo"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/template"
+	mkdir -p "$repo_dir"
+	write_template_fixture "$repo_dir"
+	CURRENT_LOG="$workdir/template.log"
+
+	run_capture_ok "$case_name: flake show failed" nix flake show --json "$repo_dir"
+	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
+	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
 run_case "channel-only from stable bumps patch" "beta" "1.0.1-beta.1"
 run_case "explicit minor bump keeps requested bump" "minor beta" "1.1.0-beta.1"
 run_set_prerelease_then_full_case
 run_set_stable_then_full_noop_case
 run_set_stable_from_prerelease_requires_full_case
 run_patch_stable_from_prerelease_requires_full_case
+run_structured_release_steps_case
+run_mk_repo_case
+run_mk_repo_tool_failure_case
+run_impure_bootstrap_validation_case
+run_legacy_api_eval_case
+run_template_eval_case
 run_randomized_quickcheck_cases
 
 echo "[test] All release tests passed" >&2

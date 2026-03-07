@@ -1,91 +1,141 @@
 # repo-lib
 
-Simple Nix flake library for:
+`repo-lib` is a pure-first Nix flake library for repo-level developer workflows:
 
-- a shared development shell (`mkDevShell`)
-- an optional release command (`mkRelease`)
-- a starter template (`template/`)
+- `mkRepo` for `devShells`, `checks`, `formatter`, and optional `packages.release`
+- structured tool banners driven from package-backed tool specs
+- structured release steps (`writeFile`, `replace`, `run`)
+- a minimal starter template in [`template/`](/Users/eric/Projects/repo-lib/template)
 
 ## Prerequisites
 
 - [Nix](https://nixos.org/download/) with flakes enabled
 - [`direnv`](https://direnv.net/) (recommended)
 
-## Use the template (new repo)
-
-From your new project folder:
+## Use the template
 
 ```bash
 nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v2.1.0#default' --refresh
 ```
 
-## Use the library (existing repo)
+## Use the library
 
 Add this flake input:
 
 ```nix
-inputs.devshell-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v2.1.0";
-inputs.devshell-lib.inputs.nixpkgs.follows = "nixpkgs";
+inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v2.1.0";
+inputs.repo-lib.inputs.nixpkgs.follows = "nixpkgs";
 ```
 
-Create your shell from `mkDevShell`:
+Build your repo outputs from `mkRepo`:
 
 ```nix
-env = devshell-lib.lib.mkDevShell {
-  inherit system;
-  src = ./.;
-  extraPackages = [ ];
-  preToolHook = "";
-  tools = [ ];
-  additionalHooks = { };
+outputs = { self, nixpkgs, repo-lib, ... }:
+  repo-lib.lib.mkRepo {
+    inherit self nixpkgs;
+    src = ./.;
+
+    config = {
+      checks.tests = {
+        command = "echo 'No tests defined yet.'";
+        stage = "pre-push";
+        passFilenames = false;
+      };
+
+      release = {
+        steps = [ ];
+      };
+    };
+
+    perSystem = { pkgs, system, ... }: {
+      tools = [
+        (repo-lib.lib.tools.fromPackage {
+          name = "Nix";
+          package = pkgs.nix;
+          version.args = [ "--version" ];
+        })
+      ];
+
+      shell.packages = [
+        self.packages.${system}.release
+      ];
+    };
+  };
+```
+
+`mkRepo` generates:
+
+- `devShells.${system}.default`
+- `checks.${system}.pre-commit-check`
+- `formatter.${system}`
+- `packages.${system}.release` when `config.release != null`
+- merged `packages` and `apps` from `perSystem`
+
+## Tool banners
+
+Tools are declared once, from packages. They are added to the shell automatically and rendered in the startup banner.
+
+```nix
+(repo-lib.lib.tools.fromPackage {
+  name = "Go";
+  package = pkgs.go;
+  version.args = [ "version" ];
+  banner.color = "CYAN";
+})
+```
+
+Required tools fail shell startup if their version probe fails. This keeps banner output honest instead of silently hiding misconfiguration.
+
+## Purity model
+
+The default path is pure: declare tools and packages in Nix, then let `mkRepo` assemble the shell.
+
+Impure bootstrap work is still possible, but it must be explicit:
+
+```nix
+config.shell = {
+  bootstrap = ''
+    export GOBIN="$PWD/.tools/bin"
+    export PATH="$GOBIN:$PATH"
+  '';
+  allowImpureBootstrap = true;
 };
 ```
 
-Expose it in `devShells` as `default` and run:
+## Release steps
 
-```bash
-nix develop
-```
-
-Use `preToolHook` when a tool needs bootstrap work before the shell prints tool versions. This is useful for tools you install outside `nixpkgs`, as long as the hook is idempotent.
+Structured release steps are preferred over raw `sed` snippets:
 
 ```nix
-env = devshell-lib.lib.mkDevShell {
-  inherit system;
-  src = ./.;
-
-  # assumes `go` is already available in PATH, for example via `extraPackages`
-
-  preToolHook = ''
-    export GOBIN="$PWD/.tools/bin"
-    export PATH="$GOBIN:$PATH"
-
-    if ! command -v golangci-lint >/dev/null 2>&1; then
-      go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-    fi
-  '';
-
-  tools = [
-    { name = "golangci-lint"; bin = "golangci-lint"; versionCmd = "version"; color = "YELLOW"; }
+config.release = {
+  steps = [
+    {
+      writeFile = {
+        path = "src/version.ts";
+        text = ''
+          export const APP_VERSION = "$FULL_VERSION" as const;
+        '';
+      };
+    }
+    {
+      replace = {
+        path = "README.md";
+        regex = ''^(version = ")[^"]*(")$'';
+        replacement = ''\1$FULL_VERSION\2'';
+      };
+    }
+    {
+      run = {
+        script = ''
+          echo "Released $FULL_TAG"
+        '';
+      };
+    }
   ];
 };
 ```
 
-## Common commands
-
-```bash
-nix fmt           # format files
-```
-
-## Optional: release command
-
-If your flake defines:
-
-```nix
-packages.${system}.release = devshell-lib.lib.mkRelease { inherit system; };
-```
-
-Run releases with:
+The generated `release` command still supports:
 
 ```bash
 release
@@ -96,5 +146,12 @@ release stable
 release set 1.2.3
 ```
 
-The release script uses `./VERSION` as the source of truth and creates tags like `v1.2.3`.
-When switching from stable to a prerelease channel without an explicit bump (for example, `release beta`), it applies a patch bump automatically (for example, `1.0.0` -> `1.0.1-beta.1`).
+## Low-level APIs
+
+`mkDevShell` and `mkRelease` remain available for repos that want lower-level control or a migration path from the older library shape.
+
+## Common command
+
+```bash
+nix fmt
+```
