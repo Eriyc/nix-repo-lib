@@ -189,7 +189,31 @@ let
         NIXEOF
         )
         export REPO_LIB_STEP_REGEX REPO_LIB_STEP_REPLACEMENT
-        perl -0pi -e 'my $regex = $ENV{"REPO_LIB_STEP_REGEX"}; my $template = $ENV{"REPO_LIB_STEP_REPLACEMENT"}; s/$regex/do { my $source = $_; my $result = $template; $result =~ s{\\([0-9]+)}{ my $index = $1; if ($index <= $#- && defined $-[$index] && $-[$index] >= 0) { substr($source, $-[$index], $+[$index] - $-[$index]); } else { ""; } }ge; $result; }gems;' "$target_path"
+        perl - "$target_path" <<'REPO_LIB_PERL_REPLACE'
+        use strict;
+        use warnings;
+
+        my $path = shift @ARGV;
+        my $regex_src = $ENV{"REPO_LIB_STEP_REGEX"} // q{};
+        my $template = $ENV{"REPO_LIB_STEP_REPLACEMENT"} // q{};
+
+        open my $in, q{<}, $path or die "failed to open $path: $!";
+        local $/ = undef;
+        my $content = <$in>;
+        close $in;
+
+        my $regex = qr/$regex_src/ms;
+        $content =~ s/$regex/
+          my @cap = map { defined $_ ? $_ : q{} } ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+          my $result = $template;
+          $result =~ s/\\([1-9])/$cap[$1 - 1]/ge;
+          $result;
+        /gems;
+
+        open my $out, q{>}, $path or die "failed to open $path for write: $!";
+        print {$out} $content;
+        close $out;
+        REPO_LIB_PERL_REPLACE
         log "Updated ${step.path}"
       ''
     else
