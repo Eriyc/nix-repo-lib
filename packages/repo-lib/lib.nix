@@ -189,7 +189,7 @@ let
         NIXEOF
         )
         export REPO_LIB_STEP_REGEX REPO_LIB_STEP_REPLACEMENT
-        perl -0pi -e 'my $regex = $ENV{"REPO_LIB_STEP_REGEX"}; my $replacement = $ENV{"REPO_LIB_STEP_REPLACEMENT"}; s/$regex/$replacement/gms;' "$target_path"
+        perl -0pi -e 'my $regex = $ENV{"REPO_LIB_STEP_REGEX"}; my $template = $ENV{"REPO_LIB_STEP_REPLACEMENT"}; s/$regex/do { my $source = $_; my $result = $template; $result =~ s{\\([0-9]+)}{ my $index = $1; if ($index <= $#- && defined $-[$index] && $-[$index] >= 0) { substr($source, $-[$index], $+[$index] - $-[$index]); } else { ""; } }ge; $result; }gems;' "$target_path"
         log "Updated ${step.path}"
       ''
     else

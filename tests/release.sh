@@ -274,6 +274,39 @@ write_impure_bootstrap_flake() {
 EOF
 }
 
+write_release_replace_backref_flake() {
+	local repo_dir="$1"
+	cat >"$repo_dir/flake.nix" <<EOF
+{
+	description = "mkRepo release replace backrefs";
+
+	inputs = {
+		nixpkgs.url = "path:${NIXPKGS_FLAKE_PATH}";
+		repo-lib.url = "path:${ROOT_DIR}";
+		repo-lib.inputs.nixpkgs.follows = "nixpkgs";
+	};
+
+	outputs = { self, nixpkgs, repo-lib, ... }:
+		repo-lib.lib.mkRepo {
+			inherit self nixpkgs;
+			src = ./.;
+
+			config.release = {
+				steps = [
+					{
+						replace = {
+							path = "template/flake.nix";
+							regex = ''^([[:space:]]*repo-lib\.url = ")[^"]*(";)$'';
+							replacement = ''\1git+https://example.invalid/repo-lib?ref=$FULL_TAG\2'';
+						};
+					}
+				];
+			};
+		};
+}
+EOF
+}
+
 write_legacy_flake() {
 	local repo_dir="$1"
 	cat >"$repo_dir/flake.nix" <<EOF
@@ -1044,6 +1077,39 @@ run_template_eval_case() {
 	echo "[test] PASS: $case_name" >&2
 }
 
+run_release_replace_backref_case() {
+	local case_name="mkRepo release replace supports sed-style backrefs"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/repo"
+	local remote_dir="$workdir/remote.git"
+	CURRENT_LOG="$workdir/release-backref.log"
+
+	setup_repo "$repo_dir" "$remote_dir"
+	mkdir -p "$repo_dir/template"
+	cat >"$repo_dir/template/flake.nix" <<'EOF'
+{
+  inputs = {
+    repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v0.0.0";
+  };
+}
+EOF
+	write_release_replace_backref_flake "$repo_dir"
+	run_capture_ok "$case_name: setup commit failed" git -C "$repo_dir" add flake.nix template/flake.nix
+	run_capture_ok "$case_name: setup commit failed" git -C "$repo_dir" commit -m "chore: add replace fixture"
+
+	run_capture_ok "$case_name: nix run release failed" bash -c 'cd "$1" && nix run .#release -- patch' _ "$repo_dir"
+
+	assert_contains 'repo-lib.url = "git+https://example.invalid/repo-lib?ref=v1.0.1";' "$repo_dir/template/flake.nix" "$case_name: replacement did not preserve captures"
+	if grep -Fq '\1git+https://example.invalid/repo-lib?ref=v1.0.1\2' "$repo_dir/template/flake.nix"; then
+		fail "$case_name: replacement left literal backreferences in output"
+	fi
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
 run_case "channel-only from stable bumps patch" "beta" "1.0.1-beta.1"
 run_case "explicit minor bump keeps requested bump" "minor beta" "1.1.0-beta.1"
 run_set_prerelease_then_full_case
@@ -1056,6 +1122,7 @@ run_mk_repo_tool_failure_case
 run_impure_bootstrap_validation_case
 run_legacy_api_eval_case
 run_template_eval_case
+run_release_replace_backref_case
 run_randomized_quickcheck_cases
 
 echo "[test] All release tests passed" >&2
