@@ -34,12 +34,15 @@
             system,
             src ? ./.,
             extraPackages ? [ ],
+            preToolHook ? "",
             extraShellHook ? "",
             additionalHooks ? { },
             tools ? [ ],
             includeStandardPackages ? true,
             # tools = list of { name, bin, versionCmd, color? }
             # e.g. { name = "Bun"; bin = "${pkgs.bun}/bin/bun"; versionCmd = "--version"; color = "YELLOW"; }
+            # preToolHook = shell snippet that runs before the ready banner and tool logs
+            # e.g. install tools outside nixpkgs, export PATH updates, warm caches
             formatters ? { },
             # formatters = treefmt-nix programs attrset, merged over { nixfmt.enable = true; }
             # e.g. { gofmt.enable = true; shfmt.enable = true; }
@@ -143,6 +146,8 @@
                 BOLD='\033[1m'
                 UNDERLINE='\033[4m'
                 RESET='\033[0m'
+
+                ${preToolHook}
 
                 printf "\n$GREEN 🚀 Dev shell ready$RESET\n\n"
                 ${toolBannerScript}

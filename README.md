@@ -35,6 +35,7 @@ env = devshell-lib.lib.mkDevShell {
   inherit system;
   src = ./.;
   extraPackages = [ ];
+  preToolHook = "";
   tools = [ ];
   additionalHooks = { };
 };
@@ -44,6 +45,30 @@ Expose it in `devShells` as `default` and run:
 
 ```bash
 nix develop
+```
+
+Use `preToolHook` when a tool needs bootstrap work before the shell prints tool versions. This is useful for tools you install outside `nixpkgs`, as long as the hook is idempotent.
+
+```nix
+env = devshell-lib.lib.mkDevShell {
+  inherit system;
+  src = ./.;
+
+  # assumes `go` is already available in PATH, for example via `extraPackages`
+
+  preToolHook = ''
+    export GOBIN="$PWD/.tools/bin"
+    export PATH="$GOBIN:$PATH"
+
+    if ! command -v golangci-lint >/dev/null 2>&1; then
+      go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    fi
+  '';
+
+  tools = [
+    { name = "golangci-lint"; bin = "golangci-lint"; versionCmd = "version"; color = "YELLOW"; }
+  ];
+};
 ```
 
 ## Common commands

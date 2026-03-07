@@ -66,7 +66,19 @@
           # { name = "Bun";   bin = "${pkgs.bun}/bin/bun";    versionCmd = "--version"; color = "YELLOW"; }
           # { name = "Go";    bin = "${pkgs.go}/bin/go";       versionCmd = "version";   color = "CYAN";   }
           # { name = "Rust";  bin = "${pkgs.rustc}/bin/rustc"; versionCmd = "--version"; color = "YELLOW"; }
+          # { name = "golangci-lint"; bin = "golangci-lint"; versionCmd = "version"; color = "YELLOW"; }
         ];
+
+        preToolHook = ''
+          # runs before the ready banner + tool version logs
+          # useful for installing tools outside nixpkgs and updating PATH first
+          #
+          # export GOBIN="$PWD/.tools/bin"
+          # export PATH="$GOBIN:$PATH"
+          # if ! command -v golangci-lint >/dev/null 2>&1; then
+          #   go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          # fi
+        '';
 
         extraShellHook = ''
           # any repo-specific shell setup here
