@@ -136,15 +136,26 @@ Preferred shape in `perSystem.tools`:
 })
 ```
 
+For a tool that should come from the host `PATH` instead of `nixpkgs`:
+
+```nix
+(repo-lib.lib.tools.fromCommand {
+  name = "Nix";
+  command = "nix";
+  version.args = [ "--version" ];
+})
+```
+
 Helper:
 
 ```nix
-repo-lib.lib.tools.simple "Nix" pkgs.nix [ "--version" ]
+repo-lib.lib.tools.simple "Go" pkgs.go [ "version" ]
 ```
 
 Tool behavior:
 
 - Tool packages are added to the shell automatically.
+- Command-backed tools are probed from the existing `PATH` and are not added to the shell automatically.
 - Banner probing uses absolute executable paths.
 - `required = true` by default.
 - Required tool probe failure aborts shell startup.

@@ -44,11 +44,37 @@ let
 
   sanitizeName = name: lib.strings.sanitizeDerivationName name;
 
+  defaultShellBanner = {
+    style = "simple";
+    icon = "🚀";
+    title = "Dev shell ready";
+    titleColor = "GREEN";
+    subtitle = "";
+    subtitleColor = "GRAY";
+    borderColor = "BLUE";
+  };
+
+  normalizeShellBanner =
+    rawBanner:
+    let
+      banner = defaultShellBanner // rawBanner;
+    in
+    if
+      !(builtins.elem banner.style [
+        "simple"
+        "pretty"
+      ])
+    then
+      throw "repo-lib: config.shell.banner.style must be one of simple or pretty"
+    else
+      banner;
+
   normalizeStrictTool =
     pkgs: tool:
     let
       version = {
         args = [ "--version" ];
+        match = null;
         regex = null;
         group = 0;
         line = 1;
@@ -56,22 +82,26 @@ let
       // (tool.version or { });
       banner = {
         color = "YELLOW";
+        icon = null;
+        iconColor = null;
       }
       // (tool.banner or { });
       executable =
-        if tool ? exe && tool.exe != null then
+        if tool ? command && tool.command != null then
+          tool.command
+        else if tool ? exe && tool.exe != null then
           "${lib.getExe' tool.package tool.exe}"
         else
           "${lib.getExe tool.package}";
     in
-    if !(tool ? package) then
-      throw "repo-lib: tool '${tool.name or "<unnamed>"}' is missing 'package'"
+    if !(tool ? command && tool.command != null) && !(tool ? package) then
+      throw "repo-lib: tool '${tool.name or "<unnamed>"}' is missing 'package' or 'command'"
     else
       {
         kind = "strict";
         inherit executable version banner;
         name = tool.name;
-        package = tool.package;
+        package = tool.package or null;
         required = tool.required or true;
       };
 
@@ -87,6 +117,8 @@ let
         versionCommand = tool.versionCmd or "--version";
         banner = {
           color = tool.color or "YELLOW";
+          icon = tool.icon or null;
+          iconColor = tool.iconColor or null;
         };
         required = tool.required or false;
       };
@@ -248,7 +280,7 @@ let
       preCommitShellHook,
       shellEnvScript,
       bootstrap,
-      toolBannerScript,
+      shellBannerScript,
       extraShellText,
       toolLabelWidth,
     }:
@@ -261,7 +293,7 @@ let
         "@TOOL_LABEL_WIDTH@"
         "@SHELL_ENV_SCRIPT@"
         "@BOOTSTRAP@"
-        "@TOOL_BANNER_SCRIPT@"
+        "@SHELL_BANNER_SCRIPT@"
         "@EXTRA_SHELL_TEXT@"
       ]
       [
@@ -269,7 +301,7 @@ let
         (toString toolLabelWidth)
         shellEnvScript
         bootstrap
-        toolBannerScript
+        shellBannerScript
         extraShellText
       ]
       template;
@@ -286,6 +318,7 @@ let
         env = { };
         extraShellText = "";
         bootstrap = "";
+        banner = defaultShellBanner;
       },
       checkSpecs ? { },
       rawHookEntries ? { },
@@ -345,30 +378,95 @@ let
         ) shellConfig.env
       );
 
-      toolBannerScript = lib.concatMapStrings (
-        tool:
-        if tool.kind == "strict" then
+      banner = normalizeShellBanner (shellConfig.banner or { });
+
+      shellBannerScript =
+        if banner.style == "pretty" then
           ''
-            repo_lib_probe_tool \
-              ${lib.escapeShellArg tool.name} \
-              ${lib.escapeShellArg tool.banner.color} \
-              ${lib.escapeShellArg (if tool.required then "1" else "0")} \
-              ${lib.escapeShellArg (toString tool.version.line)} \
-              ${lib.escapeShellArg (toString tool.version.group)} \
-              ${lib.escapeShellArg (tool.version.regex or "")} \
-              ${lib.escapeShellArg tool.executable} \
-              ${lib.escapeShellArgs tool.version.args}
+            repo_lib_print_pretty_header \
+              ${lib.escapeShellArg banner.borderColor} \
+              ${lib.escapeShellArg banner.titleColor} \
+              ${lib.escapeShellArg banner.icon} \
+              ${lib.escapeShellArg banner.title} \
+              ${lib.escapeShellArg banner.subtitleColor} \
+              ${lib.escapeShellArg banner.subtitle}
+          ''
+          + lib.concatMapStrings (
+            tool:
+            if tool.kind == "strict" then
+              ''
+                repo_lib_print_pretty_tool \
+                  ${lib.escapeShellArg banner.borderColor} \
+                  ${lib.escapeShellArg tool.name} \
+                  ${lib.escapeShellArg tool.banner.color} \
+                  ${lib.escapeShellArg (if tool.banner.icon == null then "" else tool.banner.icon)} \
+                  ${lib.escapeShellArg (if tool.banner.iconColor == null then "" else tool.banner.iconColor)} \
+                  ${lib.escapeShellArg (if tool.required then "1" else "0")} \
+                  ${lib.escapeShellArg (toString tool.version.line)} \
+                  ${lib.escapeShellArg (toString tool.version.group)} \
+                  ${lib.escapeShellArg (if tool.version.regex == null then "" else tool.version.regex)} \
+                  ${lib.escapeShellArg (if tool.version.match == null then "" else tool.version.match)} \
+                  ${lib.escapeShellArg tool.executable} \
+                  ${lib.escapeShellArgs tool.version.args}
+              ''
+            else
+              ''
+                repo_lib_print_pretty_legacy_tool \
+                  ${lib.escapeShellArg banner.borderColor} \
+                  ${lib.escapeShellArg tool.name} \
+                  ${lib.escapeShellArg tool.banner.color} \
+                  ${lib.escapeShellArg (if tool.banner.icon == null then "" else tool.banner.icon)} \
+                  ${lib.escapeShellArg (if tool.banner.iconColor == null then "" else tool.banner.iconColor)} \
+                  ${lib.escapeShellArg (if tool.required then "1" else "0")} \
+                  ${lib.escapeShellArg tool.command} \
+                  ${lib.escapeShellArg tool.versionCommand}
+              ''
+          ) tools
+          + ''
+            repo_lib_print_pretty_footer \
+              ${lib.escapeShellArg banner.borderColor}
           ''
         else
           ''
-            repo_lib_probe_legacy_tool \
-              ${lib.escapeShellArg tool.name} \
-              ${lib.escapeShellArg tool.banner.color} \
-              ${lib.escapeShellArg (if tool.required then "1" else "0")} \
-              ${lib.escapeShellArg tool.command} \
-              ${lib.escapeShellArg tool.versionCommand}
+            repo_lib_print_simple_header \
+              ${lib.escapeShellArg banner.titleColor} \
+              ${lib.escapeShellArg banner.icon} \
+              ${lib.escapeShellArg banner.title} \
+              ${lib.escapeShellArg banner.subtitleColor} \
+              ${lib.escapeShellArg banner.subtitle}
           ''
-      ) tools;
+          + lib.concatMapStrings (
+            tool:
+            if tool.kind == "strict" then
+              ''
+                repo_lib_print_simple_tool \
+                  ${lib.escapeShellArg tool.name} \
+                  ${lib.escapeShellArg tool.banner.color} \
+                  ${lib.escapeShellArg (if tool.banner.icon == null then "" else tool.banner.icon)} \
+                  ${lib.escapeShellArg (if tool.banner.iconColor == null then "" else tool.banner.iconColor)} \
+                  ${lib.escapeShellArg (if tool.required then "1" else "0")} \
+                  ${lib.escapeShellArg (toString tool.version.line)} \
+                  ${lib.escapeShellArg (toString tool.version.group)} \
+                  ${lib.escapeShellArg (if tool.version.regex == null then "" else tool.version.regex)} \
+                  ${lib.escapeShellArg (if tool.version.match == null then "" else tool.version.match)} \
+                  ${lib.escapeShellArg tool.executable} \
+                  ${lib.escapeShellArgs tool.version.args}
+              ''
+            else
+              ''
+                repo_lib_print_simple_legacy_tool \
+                  ${lib.escapeShellArg tool.name} \
+                  ${lib.escapeShellArg tool.banner.color} \
+                  ${lib.escapeShellArg (if tool.banner.icon == null then "" else tool.banner.icon)} \
+                  ${lib.escapeShellArg (if tool.banner.iconColor == null then "" else tool.banner.iconColor)} \
+                  ${lib.escapeShellArg (if tool.required then "1" else "0")} \
+                  ${lib.escapeShellArg tool.command} \
+                  ${lib.escapeShellArg tool.versionCommand}
+              ''
+          ) tools
+          + ''
+            printf "\n"
+          '';
     in
     {
       inherit pre-commit-check;
@@ -378,7 +476,7 @@ let
         buildInputs = pre-commit-check.enabledPackages;
         shellHook = buildShellHook {
           preCommitShellHook = pre-commit-check.shellHook;
-          inherit toolLabelWidth shellEnvScript toolBannerScript;
+          inherit toolLabelWidth shellEnvScript shellBannerScript;
           bootstrap = shellConfig.bootstrap;
           extraShellText = shellConfig.extraShellText;
         };
@@ -411,6 +509,24 @@ rec {
           ;
       };
 
+    fromCommand =
+      {
+        name,
+        command,
+        version ? { },
+        banner ? { },
+        required ? true,
+      }:
+      {
+        inherit
+          name
+          command
+          version
+          banner
+          required
+          ;
+      };
+
     simple =
       name: package: args:
       fromPackage {
@@ -429,6 +545,7 @@ rec {
           extraShellText = "";
           allowImpureBootstrap = false;
           bootstrap = "";
+          banner = { };
         };
         formatting = {
           programs = { };
@@ -452,7 +569,13 @@ rec {
     if merged.shell.bootstrap != "" && !merged.shell.allowImpureBootstrap then
       throw "repo-lib: config.shell.bootstrap requires config.shell.allowImpureBootstrap = true"
     else
-      merged // { inherit release; };
+      merged
+      // {
+        inherit release;
+        shell = merged.shell // {
+          banner = normalizeShellBanner merged.shell.banner;
+        };
+      };
 
   mkDevShell =
     {
@@ -487,6 +610,7 @@ rec {
         extraShellText = extraShellHook;
         allowImpureBootstrap = true;
         bootstrap = preToolHook;
+        banner = defaultShellBanner;
       };
     in
     if duplicateToolNames != [ ] then

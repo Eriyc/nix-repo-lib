@@ -6,6 +6,8 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
 GITLINT_FILE="$ROOT_DIR/.gitlint"
 START_HEAD=""
 CREATED_TAG=""
+VERSION_META_LINES=()
+VERSION_META_EXPORT_NAMES=()
 
 # ── logging ────────────────────────────────────────────────────────────────
 
@@ -168,6 +170,119 @@ compute_full_version() {
 	export BASE_VERSION CHANNEL PRERELEASE_NUM FULL_VERSION FULL_TAG
 }
 
+meta_env_name() {
+	local key="$1"
+	key="${key//[^[:alnum:]]/_}"
+	key="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
+	printf 'VERSION_META_%s\n' "$key"
+}
+
+clear_version_meta_exports() {
+	local export_name
+	for export_name in "${VERSION_META_EXPORT_NAMES[@]:-}"; do
+		unset "$export_name"
+	done
+	VERSION_META_EXPORT_NAMES=()
+}
+
+load_version_metadata() {
+	VERSION_META_LINES=()
+	[[ ! -f "$ROOT_DIR/VERSION" ]] && return 0
+
+	while IFS= read -r line || [[ -n $line ]]; do
+		VERSION_META_LINES+=("$line")
+	done < <(tail -n +4 "$ROOT_DIR/VERSION" 2>/dev/null || true)
+}
+
+export_version_metadata() {
+	clear_version_meta_exports
+
+	local line key value export_name
+	for line in "${VERSION_META_LINES[@]:-}"; do
+		[[ $line != *=* ]] && continue
+		key="${line%%=*}"
+		value="${line#*=}"
+		[[ -z $key ]] && continue
+		export_name="$(meta_env_name "$key")"
+		printf -v "$export_name" '%s' "$value"
+		export "${export_name?}=$value"
+		VERSION_META_EXPORT_NAMES+=("$export_name")
+	done
+}
+
+write_version_file() {
+	local channel_to_write="$1"
+	local n_to_write="$2"
+	{
+		printf '%s\n%s\n%s\n' "$BASE_VERSION" "$channel_to_write" "$n_to_write"
+		local line
+		for line in "${VERSION_META_LINES[@]:-}"; do
+			printf '%s\n' "$line"
+		done
+	} >"$ROOT_DIR/VERSION"
+}
+
+version_meta_get() {
+	local key="${1-}"
+	local line
+	for line in "${VERSION_META_LINES[@]:-}"; do
+		if [[ $line == "$key="* ]]; then
+			printf '%s\n' "${line#*=}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+version_meta_set() {
+	local key="${1-}"
+	local value="${2-}"
+	[[ -z $key ]] && echo "Error: version_meta_set requires a key" >&2 && exit 1
+
+	local updated=0
+	local index
+	for index in "${!VERSION_META_LINES[@]}"; do
+		if [[ ${VERSION_META_LINES[index]} == "$key="* ]]; then
+			VERSION_META_LINES[index]="$key=$value"
+			updated=1
+			break
+		fi
+	done
+
+	if [[ $updated -eq 0 ]]; then
+		VERSION_META_LINES+=("$key=$value")
+	fi
+
+	export_version_metadata
+	version_meta_write
+}
+
+version_meta_unset() {
+	local key="${1-}"
+	[[ -z $key ]] && echo "Error: version_meta_unset requires a key" >&2 && exit 1
+
+	local filtered=()
+	local line
+	for line in "${VERSION_META_LINES[@]:-}"; do
+		[[ $line == "$key="* ]] && continue
+		filtered+=("$line")
+	done
+	VERSION_META_LINES=("${filtered[@]}")
+
+	export_version_metadata
+	version_meta_write
+}
+
+version_meta_write() {
+	local channel_to_write="$CHANNEL"
+	local n_to_write="${PRERELEASE_NUM:-1}"
+	if [[ $channel_to_write == "stable" || -z $channel_to_write ]]; then
+		channel_to_write="stable"
+		n_to_write="0"
+	fi
+	write_version_file "$channel_to_write" "$n_to_write"
+}
+
 # ── gitlint ────────────────────────────────────────────────────────────────
 
 get_gitlint_title_regex() {
@@ -205,6 +320,8 @@ run_release_steps() {
 # and never contaminates the stdout of do_read_version.
 init_version_file() {
 	if [[ -f "$ROOT_DIR/VERSION" ]]; then
+		load_version_metadata
+		export_version_metadata
 		return 0
 	fi
 
@@ -233,11 +350,16 @@ init_version_file() {
 		n_to_write="0"
 	fi
 
-	printf '%s\n%s\n%s\n' "$BASE_VERSION" "$channel_to_write" "$n_to_write" >"$ROOT_DIR/VERSION"
+	VERSION_META_LINES=()
+	write_version_file "$channel_to_write" "$n_to_write"
+	export_version_metadata
 	log "Initialized $ROOT_DIR/VERSION from highest tag: v$highest_tag"
 }
 
 do_read_version() {
+	load_version_metadata
+	export_version_metadata
+
 	local base_line channel_line n_line
 	base_line="$(sed -n '1p' "$ROOT_DIR/VERSION" | tr -d '\r')"
 	channel_line="$(sed -n '2p' "$ROOT_DIR/VERSION" | tr -d '\r')"
@@ -257,7 +379,8 @@ do_write_version() {
 		channel_to_write="stable"
 		n_to_write="0"
 	fi
-	printf '%s\n%s\n%s\n' "$BASE_VERSION" "$channel_to_write" "$n_to_write" >"$ROOT_DIR/VERSION"
+	write_version_file "$channel_to_write" "$n_to_write"
+	export_version_metadata
 }
 
 # ── user-provided hook ─────────────────────────────────────────────────────

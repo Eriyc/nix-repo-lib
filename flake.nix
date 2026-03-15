@@ -36,21 +36,21 @@
                 replace = {
                   path = "template/flake.nix";
                   regex = ''^([[:space:]]*repo-lib\.url = ")git\+https://git\.dgren\.dev/eric/nix-flake-lib[^"]*(";)'';
-                  replacement = ''\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\2'';
+                  replacement = ''\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/$FULL_TAG\2'';
                 };
               }
               {
                 replace = {
                   path = "README.md";
                   regex = ''(nix flake new myapp -t ')git\+https://git\.dgren\.dev/eric/nix-flake-lib[^']*(#default' --refresh)'';
-                  replacement = ''\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\2'';
+                  replacement = ''\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/$FULL_TAG\2'';
                 };
               }
               {
                 replace = {
                   path = "README.md";
                   regex = ''^([[:space:]]*inputs\.repo-lib\.url = ")git\+https://git\.dgren\.dev/eric/nix-flake-lib[^"]*(";)'';
-                  replacement = ''\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=$FULL_TAG\2'';
+                  replacement = ''\1git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/$FULL_TAG\2'';
                 };
               }
             ];
@@ -64,10 +64,17 @@
           }:
           {
             tools = [
-              (repoLib.tools.fromPackage {
+              (repoLib.tools.fromCommand {
                 name = "Nix";
-                package = pkgs.nix;
-                version.args = [ "--version" ];
+                command = "nix";
+                version = {
+                  args = [ "--version" ];
+                  group = 1;
+                };
+                banner = {
+                  color = "BLUE";
+                  icon = "";
+                };
               })
             ];
 
@@ -90,7 +97,6 @@
                   gnused
                   coreutils
                   gnugrep
-                  nix
                   perl
                 ];
               }
@@ -98,7 +104,6 @@
                 export REPO_LIB_ROOT=${./.}
                 export NIXPKGS_FLAKE_PATH=${nixpkgs}
                 export HOME="$TMPDIR"
-                export NIX_CONFIG="experimental-features = nix-command flakes"
                 ${pkgs.bash}/bin/bash ${./tests/release.sh}
                 touch "$out"
               '';

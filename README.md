@@ -15,7 +15,7 @@
 ## Use the template
 
 ```bash
-nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v3.0.0#default' --refresh
+nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.0.0#default' --refresh
 ```
 
 ## Use the library
@@ -23,7 +23,7 @@ nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=v3.0.0#
 Add this flake input:
 
 ```nix
-inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v3.0.0";
+inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.0.0";
 inputs.repo-lib.inputs.nixpkgs.follows = "nixpkgs";
 ```
 
@@ -49,10 +49,10 @@ outputs = { self, nixpkgs, repo-lib, ... }:
 
     perSystem = { pkgs, system, ... }: {
       tools = [
-        (repo-lib.lib.tools.fromPackage {
+        (repo-lib.lib.tools.fromCommand {
           name = "Nix";
-          package = pkgs.nix;
           version.args = [ "--version" ];
+          command = "nix";
         })
       ];
 
@@ -73,7 +73,7 @@ outputs = { self, nixpkgs, repo-lib, ... }:
 
 ## Tool banners
 
-Tools are declared once, from packages. They are added to the shell automatically and rendered in the startup banner.
+Tools are declared once. Package-backed tools are added to the shell automatically, and both package-backed and command-backed tools are rendered in the startup banner.
 
 ```nix
 (repo-lib.lib.tools.fromPackage {
@@ -85,6 +85,16 @@ Tools are declared once, from packages. They are added to the shell automaticall
 ```
 
 Required tools fail shell startup if their version probe fails. This keeps banner output honest instead of silently hiding misconfiguration.
+
+When a tool should come from the host environment instead of `nixpkgs`, use `fromCommand`:
+
+```nix
+(repo-lib.lib.tools.fromCommand {
+  name = "Nix";
+  command = "nix";
+  version.args = [ "--version" ];
+})
+```
 
 ## Purity model
 

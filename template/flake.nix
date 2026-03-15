@@ -4,7 +4,7 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
-    repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v3.0.0";
+    repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.0.0";
     repo-lib.inputs.nixpkgs.follows = "nixpkgs";
   };
 
@@ -85,10 +85,17 @@
         }:
         {
           tools = [
-            (repo-lib.lib.tools.fromPackage {
+            (repo-lib.lib.tools.fromCommand {
               name = "Nix";
-              package = pkgs.nix;
-              version.args = [ "--version" ];
+              command = "nix";
+              version = {
+                args = [ "--version" ];
+                group = 1;
+              };
+              banner = {
+                color = "BLUE";
+                icon = "";
+              };
             })
 
             # (repo-lib.lib.tools.fromPackage {

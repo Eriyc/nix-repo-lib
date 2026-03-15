@@ -6,6 +6,11 @@ ROOT_DIR="${REPO_LIB_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 RELEASE_TEMPLATE="$ROOT_DIR/packages/release/release.sh"
 NIXPKGS_FLAKE_PATH="${NIXPKGS_FLAKE_PATH:-}"
 CURRENT_LOG=""
+QC_SEEN_TAGS=()
+
+if [[ -z "$NIXPKGS_FLAKE_PATH" ]]; then
+	NIXPKGS_FLAKE_PATH="$(nix eval --raw --impure --expr "(builtins.getFlake (toString ${ROOT_DIR})).inputs.nixpkgs.outPath")"
+fi
 
 fail() {
 	echo "[test] FAIL: $*" >&2
@@ -70,6 +75,8 @@ setup_repo() {
 	run_capture_ok "setup_repo: git init failed" git -C "$repo_dir" init
 	run_capture_ok "setup_repo: git config user.name failed" git -C "$repo_dir" config user.name "Release Test"
 	run_capture_ok "setup_repo: git config user.email failed" git -C "$repo_dir" config user.email "release-test@example.com"
+	run_capture_ok "setup_repo: git config commit.gpgsign failed" git -C "$repo_dir" config commit.gpgsign false
+	run_capture_ok "setup_repo: git config tag.gpgsign failed" git -C "$repo_dir" config tag.gpgsign false
 
 	cat >"$repo_dir/flake.nix" <<'EOF'
 {
@@ -213,6 +220,49 @@ write_mk_repo_flake() {
 EOF
 }
 
+write_mk_repo_command_tool_flake() {
+	local repo_dir="$1"
+	cat >"$repo_dir/flake.nix" <<EOF
+{
+  description = "mkRepo command-backed tool";
+
+  inputs = {
+    nixpkgs.url = "path:${NIXPKGS_FLAKE_PATH}";
+    repo-lib.url = "path:${ROOT_DIR}";
+    repo-lib.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { self, nixpkgs, repo-lib, ... }:
+    repo-lib.lib.mkRepo {
+      inherit self nixpkgs;
+      src = ./.;
+
+      config.release = {
+        steps = [ ];
+      };
+
+      perSystem = { system, ... }: {
+        tools = [
+          (repo-lib.lib.tools.fromCommand {
+            name = "Nix";
+            command = "nix";
+            version.args = [ "--version" ];
+            banner = {
+              color = "BLUE";
+              icon = "";
+            };
+          })
+        ];
+
+        shell.packages = [
+          self.packages.\${system}.release
+        ];
+      };
+    };
+}
+EOF
+}
+
 write_tool_failure_flake() {
 	local repo_dir="$1"
 	cat >"$repo_dir/flake.nix" <<EOF
@@ -297,7 +347,7 @@ write_release_replace_backref_flake() {
 						replace = {
 							path = "template/flake.nix";
 							regex = ''^([[:space:]]*repo-lib\.url = ")[^"]*(";)$'';
-							replacement = ''\1git+https://example.invalid/repo-lib?ref=$FULL_TAG\2'';
+							replacement = ''\1git+https://example.invalid/repo-lib?ref=refs/tags/\$FULL_TAG\2'';
 						};
 					}
 				];
@@ -392,7 +442,7 @@ EOF
 write_template_fixture() {
 	local repo_dir="$1"
 	sed \
-		-e "s|git+https://git.dgren.dev/eric/nix-flake-lib?ref=v[0-9.]*|path:${ROOT_DIR}|" \
+		-e "s|git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v[0-9.]*|path:${ROOT_DIR}|" \
 		-e "s|github:nixos/nixpkgs?ref=nixos-unstable|path:${NIXPKGS_FLAKE_PATH}|" \
 		"$ROOT_DIR/template/flake.nix" >"$repo_dir/flake.nix"
 }
@@ -496,6 +546,18 @@ qc_oracle_init() {
 	QC_STATE_BASE="1.0.0"
 	QC_STATE_CHANNEL="stable"
 	QC_STATE_PRE=""
+	QC_SEEN_TAGS=()
+}
+
+qc_seen_tag() {
+	local tag="$1"
+	local existing
+	for existing in "${QC_SEEN_TAGS[@]:-}"; do
+		if [[ "$existing" == "$tag" ]]; then
+			return 0
+		fi
+	done
+	return 1
 }
 
 qc_oracle_current_full() {
@@ -576,12 +638,16 @@ qc_oracle_apply() {
 		if [[ $cmp_status -eq 0 || $cmp_status -eq 2 ]]; then
 			return 0
 		fi
+		if qc_seen_tag "v$QC_FULL_VERSION"; then
+			return 0
+		fi
 
 		QC_STATE_BASE="$QC_BASE_VERSION"
 		QC_STATE_CHANNEL="$QC_CHANNEL"
 		QC_STATE_PRE="$QC_PRERELEASE_NUM"
 		QC_EXPECT_SUCCESS=1
 		QC_EXPECT_VERSION="$QC_FULL_VERSION"
+		QC_SEEN_TAGS+=("v$QC_FULL_VERSION")
 		return 0
 	fi
 
@@ -649,12 +715,16 @@ qc_oracle_apply() {
 	if [[ $QC_FULL_VERSION == "$current_full" ]]; then
 		return 0
 	fi
+	if qc_seen_tag "v$QC_FULL_VERSION"; then
+		return 0
+	fi
 
 	QC_STATE_BASE="$QC_BASE_VERSION"
 	QC_STATE_CHANNEL="$QC_CHANNEL"
 	QC_STATE_PRE="$QC_PRERELEASE_NUM"
 	QC_EXPECT_SUCCESS=1
 	QC_EXPECT_VERSION="$QC_FULL_VERSION"
+	QC_SEEN_TAGS+=("v$QC_FULL_VERSION")
 }
 
 run_randomized_quickcheck_cases() {
@@ -985,6 +1055,65 @@ EOF
 	echo "[test] PASS: $case_name" >&2
 }
 
+run_version_metadata_case() {
+	local case_name="release metadata is preserved and exported"
+	local release_steps
+
+	read -r -d '' release_steps <<'EOF' || true
+if [[ "$(version_meta_get desktop_backend_change_scope)" != "bindings" ]]; then
+	echo "metadata getter mismatch" >&2
+	exit 1
+fi
+if [[ "${VERSION_META_DESKTOP_BACKEND_CHANGE_SCOPE:-}" != "bindings" ]]; then
+	echo "metadata export mismatch" >&2
+	exit 1
+fi
+if [[ "${VERSION_META_DESKTOP_RELEASE_MODE:-}" != "binary" ]]; then
+	echo "metadata export mismatch" >&2
+	exit 1
+fi
+
+	version_meta_set desktop_release_mode codepush
+	version_meta_set desktop_binary_version_min 1.0.0
+	version_meta_set desktop_binary_version_max "$FULL_VERSION"
+	version_meta_set desktop_backend_compat_id compat-123
+	version_meta_unset desktop_unused
+EOF
+
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/repo"
+	local remote_dir="$workdir/remote.git"
+	CURRENT_LOG="$workdir/case.log"
+
+	prepare_case_repo_with_release_script "$repo_dir" "$remote_dir" "$release_steps" ":"
+	cat >"$repo_dir/VERSION" <<'EOF'
+1.0.0
+stable
+0
+desktop_backend_change_scope=bindings
+desktop_release_mode=binary
+desktop_unused=temporary
+EOF
+	run_capture_ok "$case_name: setup commit failed" git -C "$repo_dir" add VERSION
+	run_capture_ok "$case_name: setup commit failed" git -C "$repo_dir" commit -m "chore: seed metadata"
+	run_capture_ok "$case_name: release command failed" run_release "$repo_dir" patch
+
+	assert_eq "1.0.1" "$(version_from_file "$repo_dir")" "$case_name: VERSION mismatch"
+	assert_contains "desktop_backend_change_scope=bindings" "$repo_dir/VERSION" "$case_name: missing preserved scope"
+	assert_contains "desktop_release_mode=codepush" "$repo_dir/VERSION" "$case_name: missing updated mode"
+	assert_contains "desktop_binary_version_min=1.0.0" "$repo_dir/VERSION" "$case_name: missing min version"
+	assert_contains "desktop_binary_version_max=1.0.1" "$repo_dir/VERSION" "$case_name: missing max version"
+	assert_contains "desktop_backend_compat_id=compat-123" "$repo_dir/VERSION" "$case_name: missing compat id"
+	if grep -Fq "desktop_unused=temporary" "$repo_dir/VERSION"; then
+		fail "$case_name: unset metadata key was preserved"
+	fi
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
 run_mk_repo_case() {
 	local case_name="mkRepo exposes outputs and auto-installs tools"
 	local workdir
@@ -994,13 +1123,35 @@ run_mk_repo_case() {
 	write_mk_repo_flake "$repo_dir"
 	CURRENT_LOG="$workdir/mk-repo.log"
 
-	run_capture_ok "$case_name: flake show failed" nix flake show --json "$repo_dir"
+	run_capture_ok "$case_name: flake show failed" nix flake show --json --no-write-lock-file "$repo_dir"
 	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
 	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
 	assert_contains '"example"' "$CURRENT_LOG" "$case_name: missing merged package"
 
-	run_capture_ok "$case_name: tool package should be available in shell" nix develop "$repo_dir" -c hello --version
-	run_capture_ok "$case_name: release package should be available in shell" nix develop "$repo_dir" -c sh -c 'command -v release >/dev/null'
+	run_capture_ok "$case_name: tool package should be available in shell" bash -c 'cd "$1" && nix develop --no-write-lock-file . -c hello --version' _ "$repo_dir"
+	run_capture_ok "$case_name: release package should be available in shell" bash -c 'cd "$1" && nix develop --no-write-lock-file . -c sh -c "command -v release >/dev/null"' _ "$repo_dir"
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
+run_mk_repo_command_tool_case() {
+	local case_name="mkRepo supports command-backed tools from PATH"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/mk-repo-command-tool"
+	mkdir -p "$repo_dir"
+	write_mk_repo_command_tool_flake "$repo_dir"
+	CURRENT_LOG="$workdir/mk-repo-command-tool.log"
+
+	run_capture_ok "$case_name: flake show failed" nix flake show --json --no-write-lock-file "$repo_dir"
+	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
+	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
+
+	run_capture_ok "$case_name: system nix should be available in shell" bash -c 'cd "$1" && nix develop --no-write-lock-file . -c nix --version' _ "$repo_dir"
+	assert_contains "" "$CURRENT_LOG" "$case_name: missing tool icon in banner"
+	run_capture_ok "$case_name: release package should be available in shell" bash -c 'cd "$1" && nix develop --no-write-lock-file . -c sh -c "command -v release >/dev/null"' _ "$repo_dir"
 
 	rm -rf "$workdir"
 	CURRENT_LOG=""
@@ -1016,7 +1167,7 @@ run_mk_repo_tool_failure_case() {
 	write_tool_failure_flake "$repo_dir"
 	CURRENT_LOG="$workdir/tool-failure.log"
 
-	run_expect_failure "$case_name: shell startup should fail" nix develop "$repo_dir" -c true
+	run_expect_failure "$case_name: shell startup should fail" bash -c 'cd "$1" && nix develop . -c true' _ "$repo_dir"
 	assert_contains "probe failed" "$CURRENT_LOG" "$case_name: failure reason missing"
 
 	rm -rf "$workdir"
@@ -1090,7 +1241,7 @@ run_release_replace_backref_case() {
 	cat >"$repo_dir/template/flake.nix" <<'EOF'
 {
   inputs = {
-    repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=v0.0.0";
+    repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v0.0.0";
   };
 }
 EOF
@@ -1098,10 +1249,10 @@ EOF
 	run_capture_ok "$case_name: setup commit failed" git -C "$repo_dir" add flake.nix template/flake.nix
 	run_capture_ok "$case_name: setup commit failed" git -C "$repo_dir" commit -m "chore: add replace fixture"
 
-	run_capture_ok "$case_name: nix run release failed" bash -c 'cd "$1" && nix run .#release -- patch' _ "$repo_dir"
+	run_capture_ok "$case_name: nix run release failed" bash -c 'cd "$1" && nix run --no-write-lock-file .#release -- patch' _ "$repo_dir"
 
-	assert_contains 'repo-lib.url = "git+https://example.invalid/repo-lib?ref=v1.0.1";' "$repo_dir/template/flake.nix" "$case_name: replacement did not preserve captures"
-	if grep -Fq '\1git+https://example.invalid/repo-lib?ref=v1.0.1\2' "$repo_dir/template/flake.nix"; then
+	assert_contains 'repo-lib.url = "git+https://example.invalid/repo-lib?ref=refs/tags/v1.0.1";' "$repo_dir/template/flake.nix" "$case_name: replacement did not preserve captures"
+	if grep -Fq '\1git+https://example.invalid/repo-lib?ref=refs/tags/v1.0.1\2' "$repo_dir/template/flake.nix"; then
 		fail "$case_name: replacement left literal backreferences in output"
 	fi
 
@@ -1117,7 +1268,9 @@ run_set_stable_then_full_noop_case
 run_set_stable_from_prerelease_requires_full_case
 run_patch_stable_from_prerelease_requires_full_case
 run_structured_release_steps_case
+run_version_metadata_case
 run_mk_repo_case
+run_mk_repo_command_tool_case
 run_mk_repo_tool_failure_case
 run_impure_bootstrap_validation_case
 run_legacy_api_eval_case
