@@ -35,7 +35,7 @@ assert_contains() {
 	local needle="$1"
 	local haystack_file="$2"
 	local message="$3"
-	if ! grep -Fq "$needle" "$haystack_file"; then
+	if ! grep -Fq -- "$needle" "$haystack_file"; then
 		fail "$message (missing '$needle')"
 	fi
 }
@@ -294,6 +294,16 @@ write_mk_repo_lefthook_flake() {
     };
 }
 EOF
+}
+
+init_git_repo() {
+	local repo_dir="$1"
+
+	run_capture_ok "init_git_repo: git init failed" git -C "$repo_dir" init
+	run_capture_ok "init_git_repo: git config user.name failed" git -C "$repo_dir" config user.name "Repo Lib Test"
+	run_capture_ok "init_git_repo: git config user.email failed" git -C "$repo_dir" config user.email "repo-lib-test@example.com"
+	run_capture_ok "init_git_repo: git add failed" git -C "$repo_dir" add flake.nix
+	run_capture_ok "init_git_repo: git commit failed" git -C "$repo_dir" commit -m "init"
 }
 
 write_tool_failure_flake() {
@@ -1255,6 +1265,43 @@ run_mk_repo_lefthook_case() {
 	echo "[test] PASS: $case_name" >&2
 }
 
+run_mk_repo_treefmt_hook_case() {
+	local case_name="mkRepo configures treefmt and lefthook for dev shell hooks"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/mk-repo-treefmt"
+	local system
+	local derivation_json="$workdir/treefmt-hook.drv.json"
+	local lefthook_yml_drv
+	local lefthook_yml_json="$workdir/treefmt-hook-yml.drv.json"
+	mkdir -p "$repo_dir"
+	write_mk_repo_flake "$repo_dir"
+	CURRENT_LOG="$workdir/mk-repo-treefmt.log"
+
+	init_git_repo "$repo_dir"
+
+	run_capture_ok "$case_name: treefmt should be available in shell" bash -c 'cd "$1" && nix develop --no-write-lock-file . -c sh -c '"'"'printf "%s\n" "$LEFTHOOK_BIN" && command -v treefmt'"'"'' _ "$repo_dir"
+	assert_contains 'lefthook-dumb-term' "$CURRENT_LOG" "$case_name: LEFTHOOK_BIN wrapper missing"
+	assert_contains '/bin/treefmt' "$CURRENT_LOG" "$case_name: treefmt missing from shell"
+
+	system="$(nix eval --raw --impure --expr 'builtins.currentSystem')"
+	run_capture_ok "$case_name: formatting check derivation show failed" bash -c 'nix derivation show "$1" >"$2"' _ "$repo_dir#checks.${system}.formatting-check" "$workdir/formatting-check.drv.json"
+	run_capture_ok "$case_name: lefthook derivation show failed" bash -c 'nix derivation show "$1" >"$2"' _ "$repo_dir#checks.${system}.lefthook-check" "$derivation_json"
+
+	lefthook_yml_drv="$(perl -0ne 'print "/nix/store/$1\n" if /"([a-z0-9]{32}-lefthook\.yml\.drv)"/' "$derivation_json")"
+	if [[ -z "$lefthook_yml_drv" ]]; then
+		fail "$case_name: could not locate lefthook.yml derivation"
+	fi
+
+	run_capture_ok "$case_name: lefthook.yml derivation show failed" bash -c 'nix derivation show "$1" >"$2"' _ "$lefthook_yml_drv" "$lefthook_yml_json"
+	assert_contains '--no-cache {staged_files}' "$lefthook_yml_json" "$case_name: treefmt hook missing staged-file format command"
+	assert_contains '\"stage_fixed\":true' "$lefthook_yml_json" "$case_name: treefmt hook should re-stage formatted files"
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
 run_mk_repo_tool_failure_case() {
 	local case_name="mkRepo required tools fail shell startup"
 	local workdir
@@ -1370,6 +1417,7 @@ run_version_metadata_case
 run_mk_repo_case
 run_mk_repo_command_tool_case
 run_mk_repo_lefthook_case
+run_mk_repo_treefmt_hook_case
 run_mk_repo_tool_failure_case
 run_impure_bootstrap_validation_case
 run_legacy_api_eval_case

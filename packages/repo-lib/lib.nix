@@ -415,6 +415,10 @@ let
         // formatting.programs;
         settings.formatter = { } // formatting.settings;
       };
+      treefmtWrapper = treefmtEval.config.build.wrapper;
+      lefthookBinWrapper = pkgs.writeShellScript "lefthook-dumb-term" ''
+        exec env TERM=dumb ${lib.getExe pkgs.lefthook} "$@"
+      '';
 
       normalizedLefthookConfig = normalizeLefthookConfig "lefthook config" lefthookConfig;
       lefthookCheck = lefthookNix.lib.${system}.run {
@@ -424,7 +428,8 @@ let
             (parallelHookStageConfig "pre-commit")
             (parallelHookStageConfig "pre-push")
             (lib.setAttrByPath [ "pre-commit" "commands" "treefmt" ] {
-              run = "${treefmtEval.config.build.wrapper}/bin/treefmt --ci {staged_files}";
+              run = "${treefmtWrapper}/bin/treefmt --no-cache {staged_files}";
+              stage_fixed = true;
             })
             (lib.setAttrByPath [ "pre-commit" "commands" "gitleaks" ] {
               run = "${pkgs.gitleaks}/bin/gitleaks protect --staged";
@@ -439,6 +444,7 @@ let
         );
       };
       selectedCheckOutputs = {
+        formatting-check = treefmtEval.config.build.check src;
         hook-check = lefthookCheck;
         lefthook-check = lefthookCheck;
       };
@@ -549,10 +555,17 @@ let
     in
     {
       checks = selectedCheckOutputs;
-      formatter = treefmtEval.config.build.wrapper;
+      formatter = treefmtWrapper;
       shell = pkgs.mkShell {
+        LEFTHOOK_BIN = builtins.toString lefthookBinWrapper;
         packages = lib.unique (
-          selectedStandardPackages ++ extraPackages ++ toolPackages ++ [ pkgs.lefthook ]
+          selectedStandardPackages
+          ++ extraPackages
+          ++ toolPackages
+          ++ [
+            pkgs.lefthook
+            treefmtWrapper
+          ]
         );
         shellHook = buildShellHook {
           hooksShellHook = lefthookCheck.shellHook;
