@@ -66,10 +66,13 @@ outputs = { self, nixpkgs, repo-lib, ... }:
 `mkRepo` generates:
 
 - `devShells.${system}.default`
-- `checks.${system}.pre-commit-check`
+- `checks.${system}.hook-check`
+- `checks.${system}.lefthook-check`
 - `formatter.${system}`
 - `packages.${system}.release` when `config.release != null`
 - merged `packages` and `apps` from `perSystem`
+
+Checks are installed through `lefthook`, with `pre-commit` and `pre-push` commands configured to run in parallel.
 
 ## Tool banners
 

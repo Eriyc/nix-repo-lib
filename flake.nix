@@ -4,7 +4,8 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
-    git-hooks.url = "github:cachix/git-hooks.nix";
+    lefthook-nix.url = "github:sudosubin/lefthook.nix";
+    lefthook-nix.inputs.nixpkgs.follows = "nixpkgs";
     treefmt-nix.url = "github:numtide/treefmt-nix";
   };
 
@@ -13,13 +14,14 @@
       self,
       nixpkgs,
       treefmt-nix,
-      git-hooks,
+      lefthook-nix,
       ...
     }:
     let
       lib = nixpkgs.lib;
       repoLib = import ./packages/repo-lib/lib.nix {
-        inherit nixpkgs treefmt-nix git-hooks;
+        inherit nixpkgs treefmt-nix;
+        lefthookNix = lefthook-nix;
         releaseScriptPath = ./packages/release/release.sh;
         shellHookTemplatePath = ./packages/repo-lib/shell-hook.sh;
       };
@@ -94,6 +96,7 @@
                 nativeBuildInputs = with pkgs; [
                   bash
                   git
+                  nix
                   gnused
                   coreutils
                   gnugrep

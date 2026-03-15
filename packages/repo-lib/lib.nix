@@ -1,7 +1,7 @@
 {
   nixpkgs,
   treefmt-nix,
-  git-hooks,
+  lefthookNix,
   releaseScriptPath,
   shellHookTemplatePath,
 }:
@@ -159,6 +159,88 @@ let
         stages = [ check.stage ];
       };
 
+  normalizeHookStage =
+    hookName: stage:
+    if
+      builtins.elem stage [
+        "pre-commit"
+        "pre-push"
+        "commit-msg"
+      ]
+    then
+      stage
+    else
+      throw "repo-lib: hook '${hookName}' has unsupported stage '${stage}' for lefthook";
+
+  hookStageFileArgs =
+    stage: passFilenames:
+    if !passFilenames then
+      ""
+    else if stage == "pre-commit" then
+      " {staged_files}"
+    else if stage == "pre-push" then
+      " {push_files}"
+    else if stage == "commit-msg" then
+      " {1}"
+    else
+      throw "repo-lib: unsupported lefthook stage '${stage}'";
+
+  hookToLefthookConfig =
+    name: hook:
+    let
+      supportedFields = [
+        "description"
+        "enable"
+        "entry"
+        "name"
+        "package"
+        "pass_filenames"
+        "stages"
+      ];
+      unsupportedFields = builtins.filter (field: !(builtins.elem field supportedFields)) (
+        builtins.attrNames hook
+      );
+      stages = builtins.map (stage: normalizeHookStage name stage) (hook.stages or [ "pre-commit" ]);
+      passFilenames = hook.pass_filenames or false;
+    in
+    if unsupportedFields != [ ] then
+      throw ''
+        repo-lib: hook '${name}' uses unsupported fields for lefthook: ${lib.concatStringsSep ", " unsupportedFields}
+      ''
+    else if !(hook ? entry) then
+      throw "repo-lib: hook '${name}' is missing 'entry'"
+    else
+      lib.foldl' lib.recursiveUpdate { } (
+        builtins.map (
+          stage:
+          lib.setAttrByPath [ stage "commands" name ] {
+            run = "${hook.entry}${hookStageFileArgs stage passFilenames}";
+          }
+        ) stages
+      );
+
+  hookStages =
+    hooks:
+    lib.unique (
+      [
+        "pre-commit"
+        "commit-msg"
+      ]
+      ++ lib.concatMap (hook: hook.stages or [ "pre-commit" ]) (builtins.attrValues hooks)
+    );
+
+  parallelHookStageConfig =
+    stage:
+    if
+      builtins.elem stage [
+        "pre-commit"
+        "pre-push"
+      ]
+    then
+      lib.setAttrByPath [ stage "parallel" ] true
+    else
+      { };
+
   normalizeReleaseStep =
     step:
     if step ? writeFile then
@@ -277,7 +359,7 @@ let
 
   buildShellHook =
     {
-      preCommitShellHook,
+      hooksShellHook,
       shellEnvScript,
       bootstrap,
       shellBannerScript,
@@ -289,7 +371,7 @@ let
     in
     builtins.replaceStrings
       [
-        "\${pre-commit-check.shellHook}"
+        "@HOOKS_SHELL_HOOK@"
         "@TOOL_LABEL_WIDTH@"
         "@SHELL_ENV_SCRIPT@"
         "@BOOTSTRAP@"
@@ -297,7 +379,7 @@ let
         "@EXTRA_SHELL_TEXT@"
       ]
       [
-        preCommitShellHook
+        hooksShellHook
         (toString toolLabelWidth)
         shellEnvScript
         bootstrap
@@ -345,23 +427,28 @@ let
 
       normalizedChecks = lib.mapAttrs (name: check: normalizeCheck pkgs name check) checkSpecs;
       hooks = mergeUniqueAttrs "hook" rawHookEntries normalizedChecks;
-
-      pre-commit-check = git-hooks.lib.${system}.run {
+      lefthookCheck = lefthookNix.lib.${system}.run {
         inherit src;
-        hooks = {
-          treefmt = {
-            enable = true;
-            entry = "${treefmtEval.config.build.wrapper}/bin/treefmt --ci";
-            pass_filenames = true;
-          };
-          gitlint.enable = true;
-          gitleaks = {
-            enable = true;
-            entry = "${pkgs.gitleaks}/bin/gitleaks protect --staged";
-            pass_filenames = false;
-          };
-        }
-        // hooks;
+        config = lib.foldl' lib.recursiveUpdate { } (
+          [
+            (parallelHookStageConfig "pre-commit")
+            (lib.setAttrByPath [ "pre-commit" "commands" "treefmt" ] {
+              run = "${treefmtEval.config.build.wrapper}/bin/treefmt --ci {staged_files}";
+            })
+            (lib.setAttrByPath [ "pre-commit" "commands" "gitleaks" ] {
+              run = "${pkgs.gitleaks}/bin/gitleaks protect --staged";
+            })
+            (lib.setAttrByPath [ "commit-msg" "commands" "gitlint" ] {
+              run = "${pkgs.gitlint}/bin/gitlint --staged --msg-filename {1}";
+            })
+          ]
+          ++ builtins.map parallelHookStageConfig (hookStages hooks)
+          ++ lib.mapAttrsToList hookToLefthookConfig hooks
+        );
+      };
+      selectedCheckOutputs = {
+        hook-check = lefthookCheck;
+        lefthook-check = lefthookCheck;
       };
 
       toolNames = builtins.map (tool: tool.name) tools;
@@ -469,19 +556,21 @@ let
           '';
     in
     {
-      inherit pre-commit-check;
+      checks = selectedCheckOutputs;
       formatter = treefmtEval.config.build.wrapper;
       shell = pkgs.mkShell {
-        packages = lib.unique (selectedStandardPackages ++ extraPackages ++ toolPackages);
-        buildInputs = pre-commit-check.enabledPackages;
+        packages = lib.unique (
+          selectedStandardPackages ++ extraPackages ++ toolPackages ++ [ pkgs.lefthook ]
+        );
         shellHook = buildShellHook {
-          preCommitShellHook = pre-commit-check.shellHook;
+          hooksShellHook = lefthookCheck.shellHook;
           inherit toolLabelWidth shellEnvScript shellBannerScript;
           bootstrap = shellConfig.bootstrap;
           extraShellText = shellConfig.extraShellText;
         };
       };
-    };
+    }
+    // selectedCheckOutputs;
 in
 rec {
   systems = {
@@ -762,9 +851,7 @@ rec {
         default = systemResults.${system}.env.shell;
       });
 
-      checks = lib.genAttrs systems (system: {
-        inherit (systemResults.${system}.env) pre-commit-check;
-      });
+      checks = lib.genAttrs systems (system: systemResults.${system}.env.checks);
 
       formatter = lib.genAttrs systems (system: systemResults.${system}.env.formatter);
       packages = lib.genAttrs systems (system: systemResults.${system}.packages);

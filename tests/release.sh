@@ -415,7 +415,7 @@ write_legacy_flake() {
           };
         in
         {
-          inherit (env) pre-commit-check;
+          inherit (env) lefthook-check;
         }
       );
 
@@ -1124,7 +1124,7 @@ run_mk_repo_case() {
 	CURRENT_LOG="$workdir/mk-repo.log"
 
 	run_capture_ok "$case_name: flake show failed" nix flake show --json --no-write-lock-file "$repo_dir"
-	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
+	assert_contains '"lefthook-check"' "$CURRENT_LOG" "$case_name: missing lefthook-check"
 	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
 	assert_contains '"example"' "$CURRENT_LOG" "$case_name: missing merged package"
 
@@ -1146,7 +1146,7 @@ run_mk_repo_command_tool_case() {
 	CURRENT_LOG="$workdir/mk-repo-command-tool.log"
 
 	run_capture_ok "$case_name: flake show failed" nix flake show --json --no-write-lock-file "$repo_dir"
-	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
+	assert_contains '"lefthook-check"' "$CURRENT_LOG" "$case_name: missing lefthook-check"
 	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
 
 	run_capture_ok "$case_name: system nix should be available in shell" bash -c 'cd "$1" && nix develop --no-write-lock-file . -c nix --version' _ "$repo_dir"
@@ -1202,7 +1202,7 @@ run_legacy_api_eval_case() {
 	CURRENT_LOG="$workdir/legacy.log"
 
 	run_capture_ok "$case_name: flake show failed" nix flake show --json "$repo_dir"
-	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
+	assert_contains '"lefthook-check"' "$CURRENT_LOG" "$case_name: missing lefthook-check"
 	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
 
 	rm -rf "$workdir"
@@ -1220,7 +1220,7 @@ run_template_eval_case() {
 	CURRENT_LOG="$workdir/template.log"
 
 	run_capture_ok "$case_name: flake show failed" nix flake show --json "$repo_dir"
-	assert_contains '"pre-commit-check"' "$CURRENT_LOG" "$case_name: missing pre-commit-check"
+	assert_contains '"lefthook-check"' "$CURRENT_LOG" "$case_name: missing lefthook-check"
 	assert_contains '"release"' "$CURRENT_LOG" "$case_name: missing release package"
 
 	rm -rf "$workdir"

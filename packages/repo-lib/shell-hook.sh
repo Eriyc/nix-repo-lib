@@ -1,4 +1,4 @@
-${pre-commit-check.shellHook}
+@HOOKS_SHELL_HOOK@
 
 if [ -t 1 ]; then
   command -v tput >/dev/null 2>&1 && tput clear || printf '\033c'

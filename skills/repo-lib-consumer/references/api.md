@@ -52,7 +52,8 @@ repo-lib.lib.mkRepo {
 Generated outputs:
 
 - `devShells.${system}.default`
-- `checks.${system}.pre-commit-check`
+- `checks.${system}.hook-check`
+- `checks.${system}.lefthook-check`
 - `formatter.${system}`
 - `packages.${system}.release` when `config.release != null`
 - merged `packages` and `apps` from `perSystem`
@@ -112,7 +113,8 @@ Defaults:
 Rules:
 
 - Only `pre-commit` and `pre-push` are supported.
-- The command is wrapped as a script and connected into `git-hooks.nix`.
+- The command is wrapped as a script and connected into `lefthook.nix`.
+- `pre-commit` and `pre-push` commands are configured to run in parallel.
 
 ## Tools
 

@@ -1,4 +1,5 @@
 .pre-commit-config.yaml
+lefthook.yml
 .direnv
 result
 template/flake.lock

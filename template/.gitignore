@@ -1,5 +1,6 @@
 .direnv/
 .pre-commit-config.yaml
+lefthook.yml
 
 bazel-*
 build/

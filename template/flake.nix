@@ -40,6 +40,7 @@
         };
 
         formatting = {
+          # nixfmt is enabled by default and wired into lefthook.
           programs = {
             # shfmt.enable = true;
             # gofmt.enable = true;
@@ -50,14 +51,31 @@
           };
         };
 
-        checks.tests = {
-          command = "echo 'No tests defined yet.'";
-          stage = "pre-push";
-          passFilenames = false;
+        # These checks become lefthook commands in the generated `lefthook.yml`.
+        # repo-lib runs `pre-commit` and `pre-push` hook commands in parallel.
+        checks = {
+          tests = {
+            command = "echo 'No tests defined yet.'";
+            stage = "pre-push";
+            passFilenames = false;
+          };
+
+          # fmt = {
+          #   command = "nix fmt";
+          #   stage = "pre-commit";
+          #   passFilenames = false;
+          # };
         };
 
+        # repo-lib also installs built-in hooks for:
+        # - treefmt / nixfmt on `pre-commit`
+        # - gitleaks on `pre-commit`
+        # - gitlint on `commit-msg`
+
+        # release = null;
         release = {
           steps = [
+            # Write a generated version file during release.
             # {
             #   writeFile = {
             #     path = "src/version.ts";
@@ -66,11 +84,23 @@
             #     '';
             #   };
             # }
+
+            # Replace a version string while preserving surrounding captures.
             # {
             #   replace = {
             #     path = "README.md";
             #     regex = ''^(version = ")[^"]*(")$'';
             #     replacement = ''\1$FULL_VERSION\2'';
+            #   };
+            # }
+
+            # Run any extra release step with declared runtime inputs.
+            # {
+            #   run = {
+            #     runtimeInputs = [ pkgs.git ];
+            #     script = ''
+            #       git status --short
+            #     '';
             #   };
             # }
           ];
@@ -113,9 +143,16 @@
           ];
 
           # checks.lint = {
-          #   command = "go test ./...";
+          #   command = "bun test";
           #   stage = "pre-push";
-          #   runtimeInputs = [ pkgs.go ];
+          #   passFilenames = false;
+          #   runtimeInputs = [ pkgs.bun ];
+          # };
+
+          # checks.generated = {
+          #   command = "git diff --exit-code";
+          #   stage = "pre-commit";
+          #   passFilenames = false;
           # };
 
           # packages.my-tool = pkgs.writeShellApplication {
