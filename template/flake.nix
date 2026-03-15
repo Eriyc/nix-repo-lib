@@ -53,6 +53,7 @@
 
         # These checks become lefthook commands in the generated `lefthook.yml`.
         # repo-lib runs `pre-commit` and `pre-push` hook commands in parallel.
+        # It also sets `output = [ "failure" "summary" ]` by default.
         checks = {
           tests = {
             command = "echo 'No tests defined yet.'";

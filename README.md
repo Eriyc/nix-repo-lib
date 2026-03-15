@@ -73,6 +73,7 @@ outputs = { self, nixpkgs, repo-lib, ... }:
 - merged `packages` and `apps` from `perSystem`
 
 Checks are installed through `lefthook`, with `pre-commit` and `pre-push` commands configured to run in parallel.
+repo-lib also sets Lefthook `output = [ "failure" "summary" ]` by default.
 
 For advanced Lefthook features, use raw `config.lefthook` or `perSystem.lefthook`. Those attrsets are merged after generated checks, so you can augment a generated command with fields that the simple `checks` abstraction does not carry, such as `stage_fixed`:
 

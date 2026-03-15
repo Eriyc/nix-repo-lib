@@ -425,6 +425,12 @@ let
         inherit src;
         config = lib.foldl' lib.recursiveUpdate { } (
           [
+            {
+              output = [
+                "failure"
+                "summary"
+              ];
+            }
             (parallelHookStageConfig "pre-commit")
             (parallelHookStageConfig "pre-push")
             (lib.setAttrByPath [ "pre-commit" "commands" "treefmt" ] {

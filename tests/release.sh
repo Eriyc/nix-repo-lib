@@ -1258,6 +1258,7 @@ run_mk_repo_lefthook_case() {
 	run_capture_ok "$case_name: lefthook.yml derivation show failed" bash -c 'nix derivation show "$1" >"$2"' _ "$lefthook_yml_drv" "$lefthook_yml_json"
 	assert_contains '\"pre-push\":{\"commands\":{\"tests\":{' "$lefthook_yml_json" "$case_name: generated check missing from pre-push"
 	assert_contains 'repo-lib-check-tests' "$lefthook_yml_json" "$case_name: generated check command missing from lefthook config"
+	assert_contains '\"output\":[\"failure\",\"summary\"]' "$lefthook_yml_json" "$case_name: lefthook output config missing"
 	assert_contains '\"stage_fixed\":true' "$lefthook_yml_json" "$case_name: stage_fixed missing from lefthook config"
 
 	rm -rf "$workdir"
