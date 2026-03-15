@@ -15,7 +15,7 @@
 ## Use the template
 
 ```bash
-nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.3.0#default' --refresh
+nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.4.0#default' --refresh
 ```
 
 ## Use the library
@@ -23,7 +23,7 @@ nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/ta
 Add this flake input:
 
 ```nix
-inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.3.0";
+inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.4.0";
 inputs.repo-lib.inputs.nixpkgs.follows = "nixpkgs";
 ```
 
