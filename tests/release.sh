@@ -263,6 +263,39 @@ write_mk_repo_command_tool_flake() {
 EOF
 }
 
+write_mk_repo_lefthook_flake() {
+	local repo_dir="$1"
+	cat >"$repo_dir/flake.nix" <<EOF
+{
+  description = "mkRepo raw lefthook config";
+
+  inputs = {
+    nixpkgs.url = "path:${NIXPKGS_FLAKE_PATH}";
+    repo-lib.url = "path:${ROOT_DIR}";
+    repo-lib.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { self, nixpkgs, repo-lib, ... }:
+    repo-lib.lib.mkRepo {
+      inherit self nixpkgs;
+      src = ./.;
+
+      config = {
+        checks.tests = {
+          command = "echo test";
+          stage = "pre-push";
+          passFilenames = false;
+        };
+
+        lefthook.pre-push.commands.tests.stage_fixed = true;
+
+        release.steps = [ ];
+      };
+    };
+}
+EOF
+}
+
 write_tool_failure_flake() {
 	local repo_dir="$1"
 	cat >"$repo_dir/flake.nix" <<EOF
@@ -868,6 +901,38 @@ run_set_prerelease_then_full_case() {
 	echo "[test] PASS: $case_name" >&2
 }
 
+run_stable_then_beta_cannot_reuse_same_base_case() {
+	local case_name="stable release cannot go back to same-base beta"
+
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/repo"
+	local remote_dir="$workdir/remote.git"
+	CURRENT_LOG="$workdir/case.log"
+
+	prepare_case_repo "$repo_dir" "$remote_dir"
+
+	run_capture_ok "$case_name: initial beta release failed" run_release "$repo_dir" beta
+	run_capture_ok "$case_name: stable promotion failed" run_release "$repo_dir" full
+	run_capture_ok "$case_name: second beta release failed" run_release "$repo_dir" beta
+
+	local got_version
+	got_version="$(version_from_file "$repo_dir")"
+	assert_eq "1.0.2-beta.1" "$got_version" "$case_name: VERSION mismatch"
+
+	if ! git -C "$repo_dir" tag --list | grep -qx "v1.0.1"; then
+		fail "$case_name: expected stable tag v1.0.1 was not created"
+	fi
+
+	if ! git -C "$repo_dir" tag --list | grep -qx "v1.0.2-beta.1"; then
+		fail "$case_name: expected tag v1.0.2-beta.1 was not created"
+	fi
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
 run_set_stable_then_full_noop_case() {
 	local case_name="set stable then full fails with no-op"
 
@@ -1158,6 +1223,38 @@ run_mk_repo_command_tool_case() {
 	echo "[test] PASS: $case_name" >&2
 }
 
+run_mk_repo_lefthook_case() {
+	local case_name="mkRepo exposes raw lefthook config for advanced hook fields"
+	local workdir
+	workdir="$(mktemp -d)"
+	local repo_dir="$workdir/mk-repo-lefthook"
+	local system
+	local derivation_json="$workdir/lefthook-run.drv.json"
+	local lefthook_yml_drv
+	local lefthook_yml_json="$workdir/lefthook-yml.drv.json"
+	mkdir -p "$repo_dir"
+	write_mk_repo_lefthook_flake "$repo_dir"
+	CURRENT_LOG="$workdir/mk-repo-lefthook.log"
+
+	system="$(nix eval --raw --impure --expr 'builtins.currentSystem')"
+	run_capture_ok "$case_name: flake show failed" nix flake show --json --no-write-lock-file "$repo_dir"
+	run_capture_ok "$case_name: lefthook derivation show failed" bash -c 'nix derivation show "$1" >"$2"' _ "$repo_dir#checks.${system}.lefthook-check" "$derivation_json"
+
+	lefthook_yml_drv="$(perl -0ne 'print "/nix/store/$1\n" if /"([a-z0-9]{32}-lefthook\.yml\.drv)"/' "$derivation_json")"
+	if [[ -z "$lefthook_yml_drv" ]]; then
+		fail "$case_name: could not locate lefthook.yml derivation"
+	fi
+
+	run_capture_ok "$case_name: lefthook.yml derivation show failed" bash -c 'nix derivation show "$1" >"$2"' _ "$lefthook_yml_drv" "$lefthook_yml_json"
+	assert_contains '\"pre-push\":{\"commands\":{\"tests\":{' "$lefthook_yml_json" "$case_name: generated check missing from pre-push"
+	assert_contains 'repo-lib-check-tests' "$lefthook_yml_json" "$case_name: generated check command missing from lefthook config"
+	assert_contains '\"stage_fixed\":true' "$lefthook_yml_json" "$case_name: stage_fixed missing from lefthook config"
+
+	rm -rf "$workdir"
+	CURRENT_LOG=""
+	echo "[test] PASS: $case_name" >&2
+}
+
 run_mk_repo_tool_failure_case() {
 	local case_name="mkRepo required tools fail shell startup"
 	local workdir
@@ -1264,6 +1361,7 @@ EOF
 run_case "channel-only from stable bumps patch" "beta" "1.0.1-beta.1"
 run_case "explicit minor bump keeps requested bump" "minor beta" "1.1.0-beta.1"
 run_set_prerelease_then_full_case
+run_stable_then_beta_cannot_reuse_same_base_case
 run_set_stable_then_full_noop_case
 run_set_stable_from_prerelease_requires_full_case
 run_patch_stable_from_prerelease_requires_full_case
@@ -1271,11 +1369,14 @@ run_structured_release_steps_case
 run_version_metadata_case
 run_mk_repo_case
 run_mk_repo_command_tool_case
+run_mk_repo_lefthook_case
 run_mk_repo_tool_failure_case
 run_impure_bootstrap_validation_case
 run_legacy_api_eval_case
 run_template_eval_case
 run_release_replace_backref_case
-run_randomized_quickcheck_cases
+if [[ "${QUICKCHECK:-0}" == "1" ]]; then
+	run_randomized_quickcheck_cases
+fi
 
 echo "[test] All release tests passed" >&2

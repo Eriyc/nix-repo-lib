@@ -67,6 +67,14 @@
           # };
         };
 
+        # For advanced Lefthook fields like `stage_fixed`, use raw passthrough.
+        # repo-lib merges this after generated checks.
+        # lefthook.pre-push.commands.tests.stage_fixed = true;
+        # lefthook.commit-msg.commands.commitlint = {
+        #   run = "pnpm commitlint --edit {1}";
+        #   stage_fixed = true;
+        # };
+
         # repo-lib also installs built-in hooks for:
         # - treefmt / nixfmt on `pre-commit`
         # - gitleaks on `pre-commit`

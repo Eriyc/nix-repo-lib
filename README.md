@@ -74,6 +74,12 @@ outputs = { self, nixpkgs, repo-lib, ... }:
 
 Checks are installed through `lefthook`, with `pre-commit` and `pre-push` commands configured to run in parallel.
 
+For advanced Lefthook features, use raw `config.lefthook` or `perSystem.lefthook`. Those attrsets are merged after generated checks, so you can augment a generated command with fields that the simple `checks` abstraction does not carry, such as `stage_fixed`:
+
+```nix
+config.lefthook.pre-push.commands.tests.stage_fixed = true;
+```
+
 ## Tool banners
 
 Tools are declared once. Package-backed tools are added to the shell automatically, and both package-backed and command-backed tools are rendered in the startup banner.

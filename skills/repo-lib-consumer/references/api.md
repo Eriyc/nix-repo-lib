@@ -35,6 +35,7 @@ repo-lib.lib.mkRepo {
     };
 
     checks = { };
+    lefthook = { };
 
     release = null; # or attrset below
   };
@@ -43,6 +44,7 @@ repo-lib.lib.mkRepo {
     tools = [ ];
     shell.packages = [ ];
     checks = { };
+    lefthook = { };
     packages = { };
     apps = { };
   };
@@ -115,6 +117,34 @@ Rules:
 - Only `pre-commit` and `pre-push` are supported.
 - The command is wrapped as a script and connected into `lefthook.nix`.
 - `pre-commit` and `pre-push` commands are configured to run in parallel.
+
+## Raw Lefthook config
+
+Use `config.lefthook` or `perSystem.lefthook` for advanced Lefthook features that the built-in `checks` abstraction does not carry.
+
+Example:
+
+```nix
+{
+  checks.tests = {
+    command = "go test ./...";
+    stage = "pre-push";
+  };
+
+  lefthook.pre-push.commands.tests.stage_fixed = true;
+
+  lefthook.commit-msg.commands.commitlint = {
+    run = "pnpm commitlint --edit {1}";
+    stage_fixed = true;
+  };
+}
+```
+
+Rules:
+
+- These attrsets are passed through to `lefthook.nix`.
+- They are merged after generated checks, so they can extend generated commands.
+- Prefer `checks` for the simple common case and `lefthook` for advanced fields such as `stage_fixed`, `files`, `glob`, `exclude`, `jobs`, or `scripts`.
 
 ## Tools
 
@@ -270,6 +300,7 @@ If the user asks for a webhook after the tag exists remotely:
 - `extraPackages`
 - `preToolHook`
 - `extraShellHook`
+- `lefthook`
 - `additionalHooks`
 - old `tools = [ { name; bin; versionCmd; color; } ]`
 - `features.oxfmt`

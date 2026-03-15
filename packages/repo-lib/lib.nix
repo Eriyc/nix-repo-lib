@@ -123,7 +123,7 @@ let
         required = tool.required or false;
       };
 
-  normalizeCheck =
+  checkToLefthookConfig =
     pkgs: name: rawCheck:
     let
       check = {
@@ -152,12 +152,12 @@ let
     then
       throw "repo-lib: check '${name}' has unsupported stage '${check.stage}'"
     else
-      {
-        enable = true;
-        entry = "${wrapper}/bin/${wrapperName}";
-        pass_filenames = check.passFilenames;
-        stages = [ check.stage ];
+      lib.setAttrByPath [ check.stage "commands" name ] {
+        run = "${wrapper}/bin/${wrapperName}${hookStageFileArgs check.stage check.passFilenames}";
       };
+
+  normalizeLefthookConfig =
+    label: raw: if builtins.isAttrs raw then raw else throw "repo-lib: ${label} must be an attrset";
 
   normalizeHookStage =
     hookName: stage:
@@ -218,16 +218,6 @@ let
           }
         ) stages
       );
-
-  hookStages =
-    hooks:
-    lib.unique (
-      [
-        "pre-commit"
-        "commit-msg"
-      ]
-      ++ lib.concatMap (hook: hook.stages or [ "pre-commit" ]) (builtins.attrValues hooks)
-    );
 
   parallelHookStageConfig =
     stage:
@@ -404,6 +394,7 @@ let
       },
       checkSpecs ? { },
       rawHookEntries ? { },
+      lefthookConfig ? { },
       extraPackages ? [ ],
     }:
     let
@@ -425,13 +416,13 @@ let
         settings.formatter = { } // formatting.settings;
       };
 
-      normalizedChecks = lib.mapAttrs (name: check: normalizeCheck pkgs name check) checkSpecs;
-      hooks = mergeUniqueAttrs "hook" rawHookEntries normalizedChecks;
+      normalizedLefthookConfig = normalizeLefthookConfig "lefthook config" lefthookConfig;
       lefthookCheck = lefthookNix.lib.${system}.run {
         inherit src;
         config = lib.foldl' lib.recursiveUpdate { } (
           [
             (parallelHookStageConfig "pre-commit")
+            (parallelHookStageConfig "pre-push")
             (lib.setAttrByPath [ "pre-commit" "commands" "treefmt" ] {
               run = "${treefmtEval.config.build.wrapper}/bin/treefmt --ci {staged_files}";
             })
@@ -442,8 +433,9 @@ let
               run = "${pkgs.gitlint}/bin/gitlint --staged --msg-filename {1}";
             })
           ]
-          ++ builtins.map parallelHookStageConfig (hookStages hooks)
-          ++ lib.mapAttrsToList hookToLefthookConfig hooks
+          ++ lib.mapAttrsToList (name: check: checkToLefthookConfig pkgs name check) checkSpecs
+          ++ lib.mapAttrsToList hookToLefthookConfig rawHookEntries
+          ++ [ normalizedLefthookConfig ]
         );
       };
       selectedCheckOutputs = {
@@ -641,6 +633,7 @@ rec {
           settings = { };
         };
         checks = { };
+        lefthook = { };
         release = null;
       } rawConfig;
       release =
@@ -675,6 +668,7 @@ rec {
       preToolHook ? "",
       extraShellHook ? "",
       additionalHooks ? { },
+      lefthook ? { },
       tools ? [ ],
       includeStandardPackages ? true,
       formatters ? { },
@@ -714,6 +708,7 @@ rec {
           ;
         formatting = normalizedFormatting;
         rawHookEntries = additionalHooks;
+        lefthookConfig = lefthook;
         shellConfig = shellConfig;
         tools = legacyTools;
         extraPackages =
@@ -793,6 +788,7 @@ rec {
             tools = [ ];
             shell = { };
             checks = { };
+            lefthook = { };
             packages = { };
             apps = { };
           }
@@ -805,6 +801,9 @@ rec {
           strictTools = builtins.map (tool: normalizeStrictTool pkgs tool) perSystemResult.tools;
           duplicateToolNames = duplicateStrings (builtins.map (tool: tool.name) strictTools);
           mergedChecks = mergeUniqueAttrs "check" normalizedConfig.checks perSystemResult.checks;
+          mergedLefthookConfig =
+            lib.recursiveUpdate (normalizeLefthookConfig "config.lefthook" normalizedConfig.lefthook)
+              (normalizeLefthookConfig "perSystem.lefthook" (perSystemResult.lefthook or { }));
           shellConfig = lib.recursiveUpdate normalizedConfig.shell (perSystemResult.shell or { });
           env =
             if duplicateToolNames != [ ] then
@@ -820,6 +819,7 @@ rec {
                 formatting = normalizedConfig.formatting;
                 tools = strictTools;
                 checkSpecs = mergedChecks;
+                lefthookConfig = mergedLefthookConfig;
                 shellConfig = shellConfig;
                 extraPackages = perSystemResult.shell.packages or [ ];
               };
