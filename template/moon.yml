@@ -1,0 +1,45 @@
+$schema: "./.moon/cache/schemas/project.json"
+
+tasks:
+  typecheck:
+    command: "bun"
+    args:
+      - "run"
+      - "typecheck"
+    inputs:
+      - "package.json"
+      - "tsconfig.json"
+      - "tsconfig.options.json"
+      - "tsconfig/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  env-check:
+    command: "bun"
+    args:
+      - "run"
+      - "env:check"
+    inputs:
+      - ".env.schema"
+      - "package.json"
+      - "bunfig.toml"
+    toolchains: "system"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  env-scan:
+    command: "bun"
+    args:
+      - "run"
+      - "env:scan"
+    inputs:
+      - ".env.schema"
+      - "package.json"
+      - "bunfig.toml"
+    toolchains: "system"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: "skip"

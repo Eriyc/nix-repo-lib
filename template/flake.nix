@@ -1,6 +1,5 @@
-# flake.nix — product repo template
 {
-  description = "my-product";
+  description = "typescript-monorepo";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
@@ -20,99 +19,61 @@
       src = ./.;
 
       config = {
-        # includeStandardPackages = false;
-
         shell = {
-          env = {
-            # FOO = "bar";
+          banner = {
+            style = "pretty";
+            icon = "☾";
+            title = "Moonrepo shell ready";
+            titleColor = "GREEN";
+            subtitle = "Bun + TypeScript + Varlock";
+            subtitleColor = "GRAY";
+            borderColor = "BLUE";
           };
 
           extraShellText = ''
-            # any repo-specific shell setup here
+            export PATH="$PWD/node_modules/.bin:$PATH"
           '';
 
-          # Impure bootstrap is available as an explicit escape hatch.
-          # bootstrap = ''
-          #   export GOBIN="$PWD/.tools/bin"
-          #   export PATH="$GOBIN:$PATH"
-          # '';
-          # allowImpureBootstrap = true;
+          bootstrap = ''
+            repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+            export BUN_INSTALL_GLOBAL_DIR="$repo_root/.tools/bun/install/global"
+            export BUN_INSTALL_BIN="$repo_root/.tools/bun/bin"
+            export PATH="$BUN_INSTALL_BIN:$PATH"
+
+            mkdir -p "$BUN_INSTALL_GLOBAL_DIR" "$BUN_INSTALL_BIN"
+
+            if [ ! -x "$BUN_INSTALL_BIN/moon" ]; then
+              bun add -g @moonrepo/cli
+            fi
+          '';
+          allowImpureBootstrap = true;
         };
 
         formatting = {
-          # nixfmt is enabled by default and wired into lefthook.
           programs = {
-            # shfmt.enable = true;
-            # gofmt.enable = true;
+            oxfmt.enable = true;
           };
 
           settings = {
-            # shfmt.options = [ "-i" "2" "-s" "-w" ];
+            oxfmt.excludes = [
+              "*.css"
+              "*.graphql"
+              "*.hbs"
+              "*.html"
+              "*.md"
+              "*.mdx"
+              "*.mustache"
+              "*.scss"
+              "*.vue"
+              "*.yaml"
+              "*.yml"
+            ];
           };
         };
 
-        # These checks become lefthook commands in the generated `lefthook.yml`.
-        # repo-lib runs `pre-commit` and `pre-push` hook commands in parallel.
-        # It also sets `output = [ "failure" "summary" ]` by default.
-        checks = {
-          tests = {
-            command = "echo 'No tests defined yet.'";
-            stage = "pre-push";
-            passFilenames = false;
-          };
-
-          # fmt = {
-          #   command = "nix fmt";
-          #   stage = "pre-commit";
-          #   passFilenames = false;
-          # };
-        };
-
-        # For advanced Lefthook fields like `stage_fixed`, use raw passthrough.
-        # repo-lib merges this after generated checks.
-        # lefthook.pre-push.commands.tests.stage_fixed = true;
-        # lefthook.commit-msg.commands.commitlint = {
-        #   run = "pnpm commitlint --edit {1}";
-        #   stage_fixed = true;
-        # };
-
-        # repo-lib also installs built-in hooks for:
-        # - treefmt / nixfmt on `pre-commit`
-        # - gitleaks on `pre-commit`
-        # - gitlint on `commit-msg`
-
-        # release = null;
         release = {
-          steps = [
-            # Write a generated version file during release.
-            # {
-            #   writeFile = {
-            #     path = "src/version.ts";
-            #     text = ''
-            #       export const APP_VERSION = "$FULL_VERSION" as const;
-            #     '';
-            #   };
-            # }
-
-            # Replace a version string while preserving surrounding captures.
-            # {
-            #   replace = {
-            #     path = "README.md";
-            #     regex = ''^(version = ")[^"]*(")$'';
-            #     replacement = ''\1$FULL_VERSION\2'';
-            #   };
-            # }
-
-            # Run any extra release step with declared runtime inputs.
-            # {
-            #   run = {
-            #     runtimeInputs = [ pkgs.git ];
-            #     script = ''
-            #       git status --short
-            #     '';
-            #   };
-            # }
-          ];
+          steps = [ ];
         };
       };
 
@@ -137,37 +98,58 @@
               };
             })
 
-            # (repo-lib.lib.tools.fromPackage {
-            #   name = "Go";
-            #   package = pkgs.go;
-            #   version.args = [ "version" ];
-            #   banner.color = "CYAN";
-            # })
+            (repo-lib.lib.tools.fromPackage {
+              name = "Bun";
+              package = pkgs.bun;
+              version.args = [ "--version" ];
+              banner = {
+                color = "YELLOW";
+                icon = "";
+              };
+            })
           ];
 
           shell.packages = [
             self.packages.${system}.release
-            # pkgs.go
-            # pkgs.bun
+            pkgs.bun
+            pkgs.openbao
+            pkgs.oxfmt
+            pkgs.oxlint
           ];
 
-          # checks.lint = {
-          #   command = "bun test";
-          #   stage = "pre-push";
-          #   passFilenames = false;
-          #   runtimeInputs = [ pkgs.bun ];
-          # };
+          checks.format = {
+            command = "oxfmt --check .";
+            stage = "pre-commit";
+            passFilenames = false;
+            runtimeInputs = [ pkgs.oxfmt ];
+          };
 
-          # checks.generated = {
-          #   command = "git diff --exit-code";
-          #   stage = "pre-commit";
-          #   passFilenames = false;
-          # };
+          checks.typecheck = {
+            command = "bun run typecheck";
+            stage = "pre-push";
+            passFilenames = false;
+            runtimeInputs = [ pkgs.bun ];
+          };
 
-          # packages.my-tool = pkgs.writeShellApplication {
-          #   name = "my-tool";
-          #   text = ''echo hello'';
-          # };
+          checks.env-check = {
+            command = "bun run env:check";
+            stage = "pre-push";
+            passFilenames = false;
+            runtimeInputs = [
+              pkgs.bun
+              pkgs.openbao
+            ];
+          };
+
+          checks.env-scan = {
+            command = "bun run env:scan";
+            stage = "pre-commit";
+            passFilenames = false;
+            runtimeInputs = [
+              pkgs.bun
+              pkgs.openbao
+            ];
+          };
         };
     };
 }

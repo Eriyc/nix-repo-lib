@@ -5,7 +5,7 @@
 - `mkRepo` for `devShells`, `checks`, `formatter`, and optional `packages.release`
 - structured tool banners driven from package-backed tool specs
 - structured release steps (`writeFile`, `replace`, `run`)
-- a minimal starter template in [`template/`](/Users/eric/Projects/repo-lib/template)
+- a Bun-only Moonrepo + TypeScript + Varlock template in [`template/`](/Users/eric/Projects/repo-lib/template)
 
 ## Prerequisites
 
@@ -17,6 +17,15 @@
 ```bash
 nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.4.0#default' --refresh
 ```
+
+The generated repo includes:
+
+- a `repo-lib`-managed Nix flake
+- Bun as the only JS runtime and package manager
+- Moonrepo root tasks
+- shared TypeScript configs adapted from `../moon`
+- Varlock with a committed `.env.schema`
+- empty `apps/` and `packages/` directories for new projects
 
 ## Use the library
 

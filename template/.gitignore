@@ -1,9 +1,12 @@
 .direnv/
+.moon/cache/
 .pre-commit-config.yaml
 lefthook.yml
+.tools/
 
 bazel-*
 build/
 dist/
 
 node_modules/
+.env.sh

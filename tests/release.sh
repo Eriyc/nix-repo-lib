@@ -484,10 +484,13 @@ EOF
 
 write_template_fixture() {
 	local repo_dir="$1"
-	sed \
+	mkdir -p "$repo_dir"
+	cp -R "$ROOT_DIR/template/." "$repo_dir/"
+	sed -i.bak \
 		-e "s|git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v[0-9.]*|path:${ROOT_DIR}|" \
 		-e "s|github:nixos/nixpkgs?ref=nixos-unstable|path:${NIXPKGS_FLAKE_PATH}|" \
-		"$ROOT_DIR/template/flake.nix" >"$repo_dir/flake.nix"
+		"$repo_dir/flake.nix"
+	rm -f "$repo_dir/flake.nix.bak"
 }
 
 qc_version_cmp() {
@@ -1363,6 +1366,13 @@ run_template_eval_case() {
 	mkdir -p "$repo_dir"
 	write_template_fixture "$repo_dir"
 	CURRENT_LOG="$workdir/template.log"
+
+	if [[ ! -f "$repo_dir/package.json" ]]; then
+		fail "$case_name: template fixture missing package.json"
+	fi
+	if [[ ! -f "$repo_dir/.moon/workspace.yml" ]]; then
+		fail "$case_name: template fixture missing .moon/workspace.yml"
+	fi
 
 	run_capture_ok "$case_name: flake show failed" nix flake show --json "$repo_dir"
 	assert_contains '"lefthook-check"' "$CURRENT_LOG" "$case_name: missing lefthook-check"

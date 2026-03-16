@@ -1,0 +1,6 @@
+{
+  "extends": "./runtime.json",
+  "compilerOptions": {
+    "types": ["vite/client"]
+  }
+}
