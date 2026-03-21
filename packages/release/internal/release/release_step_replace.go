@@ -33,8 +33,9 @@ func translateReplacementBackrefs(raw string) string {
 
 	for i := 0; i < len(raw); i++ {
 		if raw[i] == '\\' && i+1 < len(raw) && raw[i+1] >= '1' && raw[i+1] <= '9' {
-			b.WriteByte('$')
+			b.WriteString("${")
 			b.WriteByte(raw[i+1])
+			b.WriteByte('}')
 			i++
 			continue
 		}
