@@ -256,13 +256,16 @@ func TestRunnerExecutesReleaseFlow(t *testing.T) {
 	}
 }
 
-func TestRunnerLeavesChangesUncommittedByDefault(t *testing.T) {
+func TestRunnerAlwaysCommitsTagsAndPushes(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	remote := filepath.Join(t.TempDir(), "remote.git")
 	mustRun(t, root, "git", "init")
 	mustRun(t, root, "git", "config", "user.name", "Release Test")
 	mustRun(t, root, "git", "config", "user.email", "release-test@example.com")
+	mustRun(t, root, "git", "config", "commit.gpgsign", "false")
+	mustRun(t, root, "git", "config", "tag.gpgsign", "false")
 	if err := os.WriteFile(filepath.Join(root, "flake.nix"), []byte("{ outputs = { self }: {}; }\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(flake.nix): %v", err)
 	}
@@ -271,6 +274,9 @@ func TestRunnerLeavesChangesUncommittedByDefault(t *testing.T) {
 	}
 	mustRun(t, root, "git", "add", "-A")
 	mustRun(t, root, "git", "commit", "-m", "init")
+	mustRun(t, root, "git", "init", "--bare", remote)
+	mustRun(t, root, "git", "remote", "add", "origin", remote)
+	mustRun(t, root, "git", "push", "-u", "origin", "HEAD")
 
 	binDir := t.TempDir()
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -296,58 +302,20 @@ func TestRunnerLeavesChangesUncommittedByDefault(t *testing.T) {
 
 	assertFileEquals(t, filepath.Join(root, "VERSION"), "1.0.1\nstable\n0\n")
 	status := strings.TrimSpace(mustOutput(t, root, "git", "status", "--short"))
-	if status != "M VERSION" {
-		t.Fatalf("git status --short = %q, want %q", status, "M VERSION")
-	}
-
-	tagList := strings.TrimSpace(mustOutput(t, root, "git", "tag", "--list"))
-	if tagList != "" {
-		t.Fatalf("git tag --list = %q, want empty", tagList)
-	}
-}
-
-func TestRunnerDryRunDoesNotModifyRepo(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	mustRun(t, root, "git", "init")
-	mustRun(t, root, "git", "config", "user.name", "Release Test")
-	mustRun(t, root, "git", "config", "user.email", "release-test@example.com")
-	if err := os.WriteFile(filepath.Join(root, "flake.nix"), []byte("{ outputs = { self }: {}; }\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(flake.nix): %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte("1.0.0\nstable\n0\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(VERSION): %v", err)
-	}
-	mustRun(t, root, "git", "add", "-A")
-	mustRun(t, root, "git", "commit", "-m", "init")
-
-	var stdout strings.Builder
-	r := &Runner{
-		Config: Config{
-			RootDir:         root,
-			AllowedChannels: []string{"alpha", "beta", "rc", "internal"},
-			Execution: ExecutionOptions{
-				DryRun: true,
-				Commit: true,
-				Tag:    true,
-				Push:   true,
-			},
-			Stdout: &stdout,
-		},
-	}
-
-	if err := r.Run([]string{"patch"}); err != nil {
-		t.Fatalf("Runner.Run: %v", err)
-	}
-
-	assertFileEquals(t, filepath.Join(root, "VERSION"), "1.0.0\nstable\n0\n")
-	status := strings.TrimSpace(mustOutput(t, root, "git", "status", "--short"))
 	if status != "" {
 		t.Fatalf("git status --short = %q, want empty", status)
 	}
-	if !strings.Contains(stdout.String(), "Dry run: 1.0.1") {
-		t.Fatalf("dry-run output missing next version:\n%s", stdout.String())
+
+	tagList := strings.TrimSpace(mustOutput(t, root, "git", "tag", "--list", "v1.0.1"))
+	if tagList != "v1.0.1" {
+		t.Fatalf("git tag --list v1.0.1 = %q, want v1.0.1", tagList)
+	}
+
+	branch := strings.TrimSpace(mustOutput(t, root, "git", "branch", "--show-current"))
+	remoteHead := strings.TrimSpace(mustOutput(t, root, "git", "rev-parse", "origin/"+branch))
+	localHead := strings.TrimSpace(mustOutput(t, root, "git", "rev-parse", "HEAD"))
+	if remoteHead != localHead {
+		t.Fatalf("origin/%s = %q, want %q", branch, remoteHead, localHead)
 	}
 }
 

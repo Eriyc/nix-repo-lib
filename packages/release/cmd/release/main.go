@@ -73,14 +73,6 @@ func parseReleaseCLIArgs(args []string) ([]string, release.ExecutionOptions, boo
 		switch arg {
 		case "select":
 			selectMode = true
-		case "--dry-run":
-			execution.DryRun = true
-		case "--commit":
-			execution.Commit = true
-		case "--tag":
-			execution.Tag = true
-		case "--push":
-			execution.Push = true
 		default:
 			if strings.HasPrefix(arg, "--") {
 				return nil, release.ExecutionOptions{}, false, fmt.Errorf("unknown flag %q", arg)

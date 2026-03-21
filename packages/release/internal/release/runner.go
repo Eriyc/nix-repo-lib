@@ -20,7 +20,6 @@ type Config struct {
 }
 
 type ExecutionOptions struct {
-	DryRun bool
 	Commit bool
 	Tag    bool
 	Push   bool
@@ -31,13 +30,11 @@ type Runner struct {
 }
 
 func (o ExecutionOptions) Normalize() ExecutionOptions {
-	if o.Push {
-		o.Commit = true
+	return ExecutionOptions{
+		Commit: true,
+		Tag:    true,
+		Push:   true,
 	}
-	if o.Tag {
-		o.Commit = true
-	}
-	return o
 }
 
 func (r *Runner) Run(args []string) error {
@@ -58,11 +55,6 @@ func (r *Runner) Run(args []string) error {
 	nextVersion, err := ResolveNextVersion(versionFile.Version, args, r.Config.AllowedChannels)
 	if err != nil {
 		return err
-	}
-
-	if execution.DryRun {
-		printReleasePlan(stdout, nextVersion, execution, strings.TrimSpace(r.Config.ReleaseStepsJSON) != "", strings.TrimSpace(r.Config.PostVersion) != "")
-		return nil
 	}
 
 	if err := requireCleanGit(rootDir); err != nil {
@@ -114,10 +106,6 @@ func (r *Runner) finalizeRelease(rootDir string, version Version, execution Exec
 		return err
 	}
 
-	if !execution.Commit {
-		return nil
-	}
-
 	if _, err := runCommand(rootDir, r.Config.Env, stdout, stderr, "git", "add", "-A"); err != nil {
 		return err
 	}
@@ -127,34 +115,15 @@ func (r *Runner) finalizeRelease(rootDir string, version Version, execution Exec
 		return err
 	}
 
-	if execution.Tag {
-		if _, err := runCommand(rootDir, r.Config.Env, stdout, stderr, "git", "tag", version.Tag()); err != nil {
-			return err
-		}
-	}
-
-	if !execution.Push {
-		return nil
+	if _, err := runCommand(rootDir, r.Config.Env, stdout, stderr, "git", "tag", version.Tag()); err != nil {
+		return err
 	}
 
 	if _, err := runCommand(rootDir, r.Config.Env, stdout, stderr, "git", "push"); err != nil {
 		return err
 	}
-	if execution.Tag {
-		if _, err := runCommand(rootDir, r.Config.Env, stdout, stderr, "git", "push", "--tags"); err != nil {
-			return err
-		}
+	if _, err := runCommand(rootDir, r.Config.Env, stdout, stderr, "git", "push", "--tags"); err != nil {
+		return err
 	}
 	return nil
-}
-
-func printReleasePlan(stdout io.Writer, version Version, execution ExecutionOptions, hasReleaseSteps bool, hasPostVersion bool) {
-	fmt.Fprintf(stdout, "Dry run: %s\n", version.String())
-	fmt.Fprintf(stdout, "Tag: %s\n", version.Tag())
-	fmt.Fprintf(stdout, "Release steps: %s\n", yesNo(hasReleaseSteps))
-	fmt.Fprintf(stdout, "Post-version: %s\n", yesNo(hasPostVersion))
-	fmt.Fprintf(stdout, "nix fmt: yes\n")
-	fmt.Fprintf(stdout, "git commit: %s\n", yesNo(execution.Commit))
-	fmt.Fprintf(stdout, "git tag: %s\n", yesNo(execution.Tag))
-	fmt.Fprintf(stdout, "git push: %s\n", yesNo(execution.Push))
 }

@@ -45,7 +45,7 @@ func SelectCommand(config Config) ([]string, bool, error) {
 		return nil, false, fmt.Errorf("no release commands available for current version %s", versionFile.Version.String())
 	}
 
-	model := newCommandPickerModel(versionFile.Version, options)
+	model := newCommandPickerModel(config, versionFile.Version)
 	finalModel, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	if err != nil {
 		return nil, false, err
@@ -111,18 +111,6 @@ func formatReleaseCommand(args []string) string {
 func formatReleaseCommandWithExecution(args []string, execution ExecutionOptions) string {
 	var parts []string
 	parts = append(parts, "release")
-	if execution.DryRun {
-		parts = append(parts, "--dry-run")
-	}
-	if execution.Commit {
-		parts = append(parts, "--commit")
-	}
-	if execution.Tag {
-		parts = append(parts, "--tag")
-	}
-	if execution.Push {
-		parts = append(parts, "--push")
-	}
 	if len(args) == 0 {
 		return strings.Join(parts, " ")
 	}
@@ -199,7 +187,6 @@ func buildPreview(config Config, current Version, args []string, next Version) s
 		"  git commit:    "+yesNo(execution.Commit),
 		"  git tag:       "+yesNo(execution.Tag),
 		"  git push:      "+yesNo(execution.Push),
-		"  dry run:       "+yesNo(execution.DryRun),
 	)
 	return strings.Join(lines, "\n")
 }
@@ -224,19 +211,32 @@ func capitalize(s string) string {
 }
 
 type commandPickerModel struct {
-	current   Version
-	options   []CommandOption
-	cursor    int
-	width     int
-	height    int
-	confirmed bool
-	selected  CommandOption
+	config         Config
+	current        Version
+	width          int
+	height         int
+	focusSection   int
+	focusIndex     int
+	bumpOptions    []selectionOption
+	channelOptions []selectionOption
+	bumpCursor     int
+	channelCursor  int
+	confirmed      bool
+	selected       CommandOption
+	err            string
 }
 
-func newCommandPickerModel(current Version, options []CommandOption) commandPickerModel {
+type selectionOption struct {
+	Label string
+	Value string
+}
+
+func newCommandPickerModel(config Config, current Version) commandPickerModel {
 	return commandPickerModel{
-		current: current,
-		options: options,
+		config:         config,
+		current:        current,
+		bumpOptions:    buildBumpOptions(current),
+		channelOptions: buildChannelOptions(current, config.AllowedChannels),
 	}
 }
 
@@ -253,17 +253,20 @@ func (m commandPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
 			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.options)-1 {
-				m.cursor++
-			}
+		case "up", "k", "shift+tab":
+			m.moveFocus(-1)
+		case "down", "j", "tab":
+			m.moveFocus(1)
+		case " ":
+			m.selectFocused()
 		case "enter":
+			option, err := m.selectedOption()
+			if err != nil {
+				m.err = err.Error()
+				return m, nil
+			}
 			m.confirmed = true
-			m.selected = m.options[m.cursor]
+			m.selected = option
 			return m, tea.Quit
 		}
 	}
@@ -271,28 +274,180 @@ func (m commandPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m commandPickerModel) View() string {
-	if len(m.options) == 0 {
+	if len(m.bumpOptions) == 0 || len(m.channelOptions) == 0 {
 		return "No release commands available.\n"
 	}
 
-	preview := m.options[m.cursor].Preview
-	header := fmt.Sprintf("Release command picker\nCurrent version: %s\nUse up/down or j/k to choose, Enter to run, q to cancel.\n", m.current.String())
-
-	listLines := make([]string, 0, len(m.options)+1)
-	listLines = append(listLines, "Commands")
-	for i, option := range m.options {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
-		}
-		listLines = append(listLines, fmt.Sprintf("%s%s\n  %s", cursor, option.Command, option.Description))
-	}
-	list := strings.Join(listLines, "\n")
+	preview := m.preview()
+	header := fmt.Sprintf("Release command picker\nCurrent version: %s\nUse up/down to move through options, Space to select, Enter to run, q to cancel.\n", m.current.String())
+	sections := strings.Join([]string{
+		m.renderSection("Bump type", m.bumpOptions, m.bumpCursor, m.focusSection == 0, m.focusedOptionIndex()),
+		"",
+		m.renderSection("Channel", m.channelOptions, m.channelCursor, m.focusSection == 1, m.focusedOptionIndex()),
+	}, "\n")
 
 	if m.width >= 100 {
-		return header + "\n" + renderColumns(list, preview, m.width)
+		return header + "\n" + renderColumns(sections, preview, m.width)
 	}
-	return header + "\n" + list + "\n\n" + preview + "\n"
+	return header + "\n" + sections + "\n\n" + preview + "\n"
+}
+
+func buildBumpOptions(current Version) []selectionOption {
+	options := []selectionOption{
+		{Label: "Patch", Value: "patch"},
+		{Label: "Minor", Value: "minor"},
+		{Label: "Major", Value: "major"},
+	}
+	if current.Channel != "stable" {
+		options = append(options, selectionOption{
+			Label: "None",
+			Value: "",
+		})
+		return options
+	}
+	options = append(options, selectionOption{
+		Label: "None",
+		Value: "",
+	})
+	return options
+}
+
+func buildChannelOptions(current Version, allowedChannels []string) []selectionOption {
+	options := []selectionOption{{
+		Label: "Current",
+		Value: current.Channel,
+	}}
+	if current.Channel != "stable" {
+		options = append(options, selectionOption{
+			Label: "Stable",
+			Value: "stable",
+		})
+	}
+	for _, channel := range allowedChannels {
+		if channel == current.Channel {
+			continue
+		}
+		options = append(options, selectionOption{
+			Label: capitalize(channel),
+			Value: channel,
+		})
+	}
+	return options
+}
+
+func (m *commandPickerModel) moveFocus(delta int) {
+	total := len(m.bumpOptions) + len(m.channelOptions)
+	if total == 0 {
+		return
+	}
+
+	index := wrapIndex(m.focusIndex+delta, total)
+	m.focusIndex = index
+
+	if index < len(m.bumpOptions) {
+		m.focusSection = 0
+		return
+	}
+
+	m.focusSection = 1
+}
+
+func (m *commandPickerModel) selectFocused() {
+	if m.focusSection == 0 {
+		m.bumpCursor = m.focusedOptionIndex()
+		return
+	}
+	m.channelCursor = m.focusedOptionIndex()
+}
+
+func wrapIndex(idx int, size int) int {
+	if size == 0 {
+		return 0
+	}
+	for idx < 0 {
+		idx += size
+	}
+	return idx % size
+}
+
+func (m commandPickerModel) focusedOptionIndex() int {
+	if m.focusSection == 0 {
+		return m.focusIndex
+	}
+	return m.focusIndex - len(m.bumpOptions)
+}
+
+func (m commandPickerModel) renderSection(title string, options []selectionOption, cursor int, focused bool, focusedIndex int) string {
+	lines := []string{title}
+	for i, option := range options {
+		pointer := " "
+		if focused && i == focusedIndex {
+			pointer = ">"
+		}
+		radio := "( )"
+		if i == cursor {
+			radio = "(*)"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s %s", pointer, radio, option.Label))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m commandPickerModel) selectedArgs() []string {
+	bump := m.bumpOptions[m.bumpCursor].Value
+	channel := m.channelOptions[m.channelCursor].Value
+
+	if bump == "" {
+		if channel == "stable" {
+			return []string{"stable"}
+		}
+		if channel == m.current.Channel {
+			if channel == "stable" {
+				return nil
+			}
+			return []string{channel}
+		}
+		return []string{channel}
+	}
+
+	if channel == m.current.Channel || (channel == "stable" && m.current.Channel == "stable") {
+		return []string{bump}
+	}
+	return []string{bump, channel}
+}
+
+func (m commandPickerModel) selectedOption() (CommandOption, error) {
+	args := m.selectedArgs()
+	next, err := ResolveNextVersion(m.current, args, m.config.AllowedChannels)
+	if err != nil {
+		return CommandOption{}, err
+	}
+	return CommandOption{
+		Title:       titleForArgs(args),
+		Description: descriptionForArgs(m.current, args, next),
+		Command:     formatReleaseCommand(args),
+		Args:        append([]string(nil), args...),
+		NextVersion: next,
+		Preview:     buildPreview(m.config, m.current, args, next),
+	}, nil
+}
+
+func (m commandPickerModel) preview() string {
+	option, err := m.selectedOption()
+	if err != nil {
+		lines := []string{
+			"Command",
+			"  " + formatReleaseCommand(m.selectedArgs()),
+			"",
+			"Selection",
+			"  " + err.Error(),
+		}
+		if m.err != "" {
+			lines = append(lines, "", "Error", "  "+m.err)
+		}
+		return strings.Join(lines, "\n")
+	}
+	return option.Preview
 }
 
 func renderColumns(left string, right string, width int) string {
