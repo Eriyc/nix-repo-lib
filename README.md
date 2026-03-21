@@ -17,7 +17,7 @@ Audit and replacement review: [`docs/reviews/2026-03-21-repo-lib-audit.md`](/Use
 ## Use the template
 
 ```bash
-nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.5.1#default' --refresh
+nix flake new myapp -t 'git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.6.0#default' --refresh
 ```
 
 The generated repo includes:
@@ -34,7 +34,7 @@ The generated repo includes:
 Add this flake input:
 
 ```nix
-inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.5.1";
+inputs.repo-lib.url = "git+https://git.dgren.dev/eric/nix-flake-lib?ref=refs/tags/v3.6.0";
 inputs.repo-lib.inputs.nixpkgs.follows = "nixpkgs";
 ```
 
