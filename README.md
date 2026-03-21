@@ -4,8 +4,10 @@
 
 - `mkRepo` for `devShells`, `checks`, `formatter`, and optional `packages.release`
 - structured tool banners driven from package-backed tool specs
-- structured release steps (`writeFile`, `replace`, `run`)
+- structured release steps (`writeFile`, `replace`, `versionMetaSet`, `versionMetaUnset`)
 - a Bun-only Moonrepo + TypeScript + Varlock template in [`template/`](/Users/eric/Projects/repo-lib/template)
+
+Audit and replacement review: [`docs/reviews/2026-03-21-repo-lib-audit.md`](/Users/eric/Projects/repo-lib/docs/reviews/2026-03-21-repo-lib-audit.md)
 
 ## Prerequisites
 
@@ -154,10 +156,9 @@ config.release = {
       };
     }
     {
-      run = {
-        script = ''
-          echo "Released $FULL_TAG"
-        '';
+      versionMetaSet = {
+        key = "desktop_binary_version_max";
+        value = "$FULL_VERSION";
       };
     }
   ];
@@ -168,16 +169,30 @@ The generated `release` command still supports:
 
 ```bash
 release
+release select
+release --dry-run patch
 release patch
+release patch --commit
+release patch --commit --tag
+release patch --commit --tag --push
 release beta
 release minor beta
 release stable
 release set 1.2.3
 ```
 
+By default, `release` updates repo files, runs structured release steps, executes `postVersion`, and runs `nix fmt`, but it does not commit, tag, or push unless you opt in with flags.
+
+- `--commit` stages all changes and creates `chore(release): <tag>`
+- `--tag` creates the Git tag after commit
+- `--push` pushes the current branch and, when tagging is enabled, pushes tags too
+- `--dry-run` resolves and prints the plan without mutating the repo
+
+When `release` runs with no args in an interactive terminal, it opens a Bubble Tea picker so you can preview the exact command, flags, and resolved next version before executing it. Use `release select` to force that picker explicitly.
+
 ## Low-level APIs
 
-`mkDevShell` and `mkRelease` remain available for repos that want lower-level control or a migration path from the older library shape.
+`mkRelease` remains available for repos that want lower-level control over release automation.
 
 ## Common command
 

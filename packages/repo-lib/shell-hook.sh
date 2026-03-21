@@ -70,39 +70,6 @@ repo_lib_capture_tool() {
   return 0
 }
 
-repo_lib_capture_legacy_tool() {
-  local required="$1"
-  local command_name="$2"
-  local version_command="$3"
-
-  local output=""
-  local version=""
-
-  REPO_LIB_TOOL_VERSION=""
-  REPO_LIB_TOOL_ERROR=""
-
-  if ! command -v "$command_name" >/dev/null 2>&1; then
-    REPO_LIB_TOOL_ERROR="missing command"
-    return 1
-  fi
-
-  if ! output="$(sh -c "$command_name $version_command" 2>&1)"; then
-    REPO_LIB_TOOL_ERROR="probe failed"
-    printf "%s\n" "$output" >&2
-    return 1
-  fi
-
-  version="$(printf '%s\n' "$output" | head -n 1 | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-  if [ -z "$version" ]; then
-    REPO_LIB_TOOL_ERROR="empty version"
-    printf "%s\n" "$output" >&2
-    return 1
-  fi
-
-  REPO_LIB_TOOL_VERSION="$version"
-  return 0
-}
-
 repo_lib_print_simple_header() {
   local title_color_name="$1"
   local icon="$2"
@@ -146,42 +113,6 @@ repo_lib_print_simple_tool() {
   fi
 
   if repo_lib_capture_tool "$required" "$line_no" "$group_no" "$regex" "$match_regex" "$executable" "$@"; then
-    icon_color="${!effective_icon_color_name:-$color}"
-    printf "  "
-    if [ -n "$icon" ]; then
-      printf "%s%s%s " "$icon_color" "$icon" "$RESET"
-    fi
-    printf "$CYAN %-@TOOL_LABEL_WIDTH@s$RESET %s%s$RESET\n" "${name}:" "$color" "$REPO_LIB_TOOL_VERSION"
-  else
-    printf "  "
-    if [ -n "$icon" ]; then
-      printf "%s%s%s " "$RED" "$icon" "$RESET"
-    fi
-    printf "$CYAN %-@TOOL_LABEL_WIDTH@s$RESET $RED%s$RESET\n" "${name}:" "$REPO_LIB_TOOL_ERROR"
-    if [ "$required" = "1" ]; then
-      exit 1
-    fi
-  fi
-}
-
-repo_lib_print_simple_legacy_tool() {
-  local name="$1"
-  local color_name="$2"
-  local icon="$3"
-  local icon_color_name="$4"
-  local required="$5"
-  local command_name="$6"
-  local version_command="$7"
-
-  local color="${!color_name:-$YELLOW}"
-  local effective_icon_color_name="$icon_color_name"
-  local icon_color=""
-
-  if [ -z "$effective_icon_color_name" ]; then
-    effective_icon_color_name="$color_name"
-  fi
-
-  if repo_lib_capture_legacy_tool "$required" "$command_name" "$version_command"; then
     icon_color="${!effective_icon_color_name:-$color}"
     printf "  "
     if [ -n "$icon" ]; then
@@ -266,45 +197,6 @@ repo_lib_print_pretty_tool() {
   fi
 
   if repo_lib_capture_tool "$required" "$line_no" "$group_no" "$regex" "$match_regex" "$executable" "$@"; then
-    value="$REPO_LIB_TOOL_VERSION"
-  else
-    value="$REPO_LIB_TOOL_ERROR"
-    effective_icon_color_name="RED"
-    value_color_name="RED"
-  fi
-
-  repo_lib_print_pretty_row \
-    "$border_color_name" \
-    "$icon" \
-    "$effective_icon_color_name" \
-    "$name" \
-    "$value" \
-    "$value_color_name"
-
-  if [ "$value_color_name" = "RED" ] && [ "$required" = "1" ]; then
-    exit 1
-  fi
-}
-
-repo_lib_print_pretty_legacy_tool() {
-  local border_color_name="$1"
-  local name="$2"
-  local color_name="$3"
-  local icon="$4"
-  local icon_color_name="$5"
-  local required="$6"
-  local command_name="$7"
-  local version_command="$8"
-
-  local effective_icon_color_name="$icon_color_name"
-  local value_color_name="$color_name"
-  local value=""
-
-  if [ -z "$effective_icon_color_name" ]; then
-    effective_icon_color_name="$color_name"
-  fi
-
-  if repo_lib_capture_legacy_tool "$required" "$command_name" "$version_command"; then
     value="$REPO_LIB_TOOL_VERSION"
   else
     value="$REPO_LIB_TOOL_ERROR"

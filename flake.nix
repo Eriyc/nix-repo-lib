@@ -3,6 +3,7 @@
   description = "Pure-first repo development platform for Nix flakes";
 
   inputs = {
+    flake-parts.url = "github:hercules-ci/flake-parts";
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     lefthook-nix.url = "github:sudosubin/lefthook.nix";
     lefthook-nix.inputs.nixpkgs.follows = "nixpkgs";
@@ -12,6 +13,7 @@
   outputs =
     {
       self,
+      flake-parts,
       nixpkgs,
       treefmt-nix,
       lefthook-nix,
@@ -20,7 +22,7 @@
     let
       lib = nixpkgs.lib;
       repoLib = import ./packages/repo-lib/lib.nix {
-        inherit nixpkgs treefmt-nix;
+        inherit flake-parts nixpkgs treefmt-nix;
         lefthookNix = lefthook-nix;
         releaseScriptPath = ./packages/release/release.sh;
         shellHookTemplatePath = ./packages/repo-lib/shell-hook.sh;
@@ -94,20 +96,16 @@
             pkgs.runCommand "release-tests"
               {
                 nativeBuildInputs = with pkgs; [
-                  bash
+                  go
                   git
-                  nix
-                  gnused
-                  coreutils
-                  gnugrep
-                  perl
                 ];
               }
               ''
-                export REPO_LIB_ROOT=${./.}
-                export NIXPKGS_FLAKE_PATH=${nixpkgs}
-                export HOME="$TMPDIR"
-                ${pkgs.bash}/bin/bash ${./tests/release.sh}
+                export HOME="$PWD/.home"
+                export GOCACHE="$PWD/.go-cache"
+                mkdir -p "$GOCACHE" "$HOME"
+                cd ${./packages/release}
+                go test ./...
                 touch "$out"
               '';
         }

@@ -1,4 +1,5 @@
 {
+  flake-parts,
   nixpkgs,
   treefmt-nix,
   lefthookNix,
@@ -6,58 +7,12 @@
   shellHookTemplatePath,
 }:
 let
-  lib = nixpkgs.lib;
-
-  supportedSystems = [
-    "x86_64-linux"
-    "aarch64-linux"
-    "x86_64-darwin"
-    "aarch64-darwin"
-  ];
-
-  defaultReleaseChannels = [
-    "alpha"
-    "beta"
-    "rc"
-    "internal"
-  ];
-
-  importPkgs = nixpkgsInput: system: import nixpkgsInput { inherit system; };
-
-  duplicateStrings =
-    names:
-    lib.unique (
-      builtins.filter (
-        name: builtins.length (builtins.filter (candidate: candidate == name) names) > 1
-      ) names
-    );
-
-  mergeUniqueAttrs =
-    label: left: right:
-    let
-      overlap = builtins.attrNames (lib.intersectAttrs left right);
-    in
-    if overlap != [ ] then
-      throw "repo-lib: duplicate ${label}: ${lib.concatStringsSep ", " overlap}"
-    else
-      left // right;
-
-  sanitizeName = name: lib.strings.sanitizeDerivationName name;
-
-  defaultShellBanner = {
-    style = "simple";
-    icon = "🚀";
-    title = "Dev shell ready";
-    titleColor = "GREEN";
-    subtitle = "";
-    subtitleColor = "GRAY";
-    borderColor = "BLUE";
-  };
-
+  defaults = import ./lib/defaults.nix { };
+  common = import ./lib/common.nix { inherit nixpkgs; };
   normalizeShellBanner =
     rawBanner:
     let
-      banner = defaultShellBanner // rawBanner;
+      banner = defaults.defaultShellBanner // rawBanner;
     in
     if
       !(builtins.elem banner.style [
@@ -68,812 +23,78 @@ let
       throw "repo-lib: config.shell.banner.style must be one of simple or pretty"
     else
       banner;
-
-  normalizeStrictTool =
-    pkgs: tool:
-    let
-      version = {
-        args = [ "--version" ];
-        match = null;
-        regex = null;
-        group = 0;
-        line = 1;
-      }
-      // (tool.version or { });
-      banner = {
-        color = "YELLOW";
-        icon = null;
-        iconColor = null;
-      }
-      // (tool.banner or { });
-      executable =
-        if tool ? command && tool.command != null then
-          tool.command
-        else if tool ? exe && tool.exe != null then
-          "${lib.getExe' tool.package tool.exe}"
-        else
-          "${lib.getExe tool.package}";
-    in
-    if !(tool ? command && tool.command != null) && !(tool ? package) then
-      throw "repo-lib: tool '${tool.name or "<unnamed>"}' is missing 'package' or 'command'"
-    else
-      {
-        kind = "strict";
-        inherit executable version banner;
-        name = tool.name;
-        package = tool.package or null;
-        required = tool.required or true;
-      };
-
-  normalizeLegacyTool =
-    pkgs: tool:
-    if tool ? package then
-      normalizeStrictTool pkgs tool
-    else
-      {
-        kind = "legacy";
-        name = tool.name;
-        command = tool.bin;
-        versionCommand = tool.versionCmd or "--version";
-        banner = {
-          color = tool.color or "YELLOW";
-          icon = tool.icon or null;
-          iconColor = tool.iconColor or null;
-        };
-        required = tool.required or false;
-      };
-
-  checkToLefthookConfig =
-    pkgs: name: rawCheck:
-    let
-      check = {
-        stage = "pre-commit";
-        passFilenames = false;
-        runtimeInputs = [ ];
-      }
-      // rawCheck;
-      wrapperName = "repo-lib-check-${sanitizeName name}";
-      wrapper = pkgs.writeShellApplication {
-        name = wrapperName;
-        runtimeInputs = check.runtimeInputs;
-        text = ''
-          set -euo pipefail
-          ${check.command}
-        '';
-      };
-    in
-    if !(check ? command) then
-      throw "repo-lib: check '${name}' is missing 'command'"
-    else if
-      !(builtins.elem check.stage [
-        "pre-commit"
-        "pre-push"
-      ])
-    then
-      throw "repo-lib: check '${name}' has unsupported stage '${check.stage}'"
-    else
-      lib.setAttrByPath [ check.stage "commands" name ] {
-        run = "${wrapper}/bin/${wrapperName}${hookStageFileArgs check.stage check.passFilenames}";
-      };
-
-  normalizeLefthookConfig =
-    label: raw: if builtins.isAttrs raw then raw else throw "repo-lib: ${label} must be an attrset";
-
-  normalizeHookStage =
-    hookName: stage:
-    if
-      builtins.elem stage [
-        "pre-commit"
-        "pre-push"
-        "commit-msg"
-      ]
-    then
-      stage
-    else
-      throw "repo-lib: hook '${hookName}' has unsupported stage '${stage}' for lefthook";
-
-  hookStageFileArgs =
-    stage: passFilenames:
-    if !passFilenames then
-      ""
-    else if stage == "pre-commit" then
-      " {staged_files}"
-    else if stage == "pre-push" then
-      " {push_files}"
-    else if stage == "commit-msg" then
-      " {1}"
-    else
-      throw "repo-lib: unsupported lefthook stage '${stage}'";
-
-  hookToLefthookConfig =
-    name: hook:
-    let
-      supportedFields = [
-        "description"
-        "enable"
-        "entry"
-        "name"
-        "package"
-        "pass_filenames"
-        "stages"
-      ];
-      unsupportedFields = builtins.filter (field: !(builtins.elem field supportedFields)) (
-        builtins.attrNames hook
-      );
-      stages = builtins.map (stage: normalizeHookStage name stage) (hook.stages or [ "pre-commit" ]);
-      passFilenames = hook.pass_filenames or false;
-    in
-    if unsupportedFields != [ ] then
-      throw ''
-        repo-lib: hook '${name}' uses unsupported fields for lefthook: ${lib.concatStringsSep ", " unsupportedFields}
-      ''
-    else if !(hook ? entry) then
-      throw "repo-lib: hook '${name}' is missing 'entry'"
-    else
-      lib.foldl' lib.recursiveUpdate { } (
-        builtins.map (
-          stage:
-          lib.setAttrByPath [ stage "commands" name ] {
-            run = "${hook.entry}${hookStageFileArgs stage passFilenames}";
-          }
-        ) stages
-      );
-
-  parallelHookStageConfig =
-    stage:
-    if
-      builtins.elem stage [
-        "pre-commit"
-        "pre-push"
-      ]
-    then
-      lib.setAttrByPath [ stage "parallel" ] true
-    else
-      { };
-
-  normalizeReleaseStep =
-    step:
-    if step ? writeFile then
-      {
-        kind = "writeFile";
-        path = step.writeFile.path;
-        text = step.writeFile.text;
-        runtimeInputs = [ ];
-      }
-    else if step ? replace then
-      {
-        kind = "replace";
-        path = step.replace.path;
-        regex = step.replace.regex;
-        replacement = step.replace.replacement;
-        runtimeInputs = [ ];
-      }
-    else if step ? run && builtins.isAttrs step.run then
-      {
-        kind = "run";
-        script = step.run.script;
-        runtimeInputs = step.run.runtimeInputs or [ ];
-      }
-    else if step ? run then
-      {
-        kind = "run";
-        script = step.run;
-        runtimeInputs = [ ];
-      }
-    else if step ? file then
-      {
-        kind = "writeFile";
-        path = step.file;
-        text = step.content;
-        runtimeInputs = [ ];
-      }
-    else
-      throw "repo-lib: release step must contain one of writeFile, replace, or run";
-
-  releaseStepScript =
-    step:
-    if step.kind == "writeFile" then
-      ''
-        target_path="$ROOT_DIR/${step.path}"
-        mkdir -p "$(dirname "$target_path")"
-        cat >"$target_path" << NIXEOF
-        ${step.text}
-        NIXEOF
-        log "Generated version file: ${step.path}"
-      ''
-    else if step.kind == "replace" then
-      ''
-        target_path="$ROOT_DIR/${step.path}"
-        REPO_LIB_STEP_REGEX=$(cat <<'NIXEOF'
-        ${step.regex}
-        NIXEOF
-        )
-        REPO_LIB_STEP_REPLACEMENT=$(cat <<NIXEOF
-        ${step.replacement}
-        NIXEOF
-        )
-        export REPO_LIB_STEP_REGEX REPO_LIB_STEP_REPLACEMENT
-        perl - "$target_path" <<'REPO_LIB_PERL_REPLACE'
-        use strict;
-        use warnings;
-
-        my $path = shift @ARGV;
-        my $regex_src = $ENV{"REPO_LIB_STEP_REGEX"} // q{};
-        my $template = $ENV{"REPO_LIB_STEP_REPLACEMENT"} // q{};
-
-        open my $in, q{<}, $path or die "failed to open $path: $!";
-        local $/ = undef;
-        my $content = <$in>;
-        close $in;
-
-        my $regex = qr/$regex_src/ms;
-        $content =~ s{$regex}{
-          my @cap = map { defined $_ ? $_ : q{} } ($1, $2, $3, $4, $5, $6, $7, $8, $9);
-          my $result = $template;
-          $result =~ s{\\([1-9])}{$cap[$1 - 1]}ge;
-          $result;
-        }gems;
-
-        open my $out, q{>}, $path or die "failed to open $path for write: $!";
-        print {$out} $content;
-        close $out;
-        REPO_LIB_PERL_REPLACE
-        log "Updated ${step.path}"
-      ''
-    else
-      ''
-        ${step.script}
-      '';
-
-  normalizeReleaseConfig =
-    raw:
-    let
-      hasLegacySteps = raw ? release;
-      hasStructuredSteps = raw ? steps;
-      steps =
-        if hasLegacySteps && hasStructuredSteps then
-          throw "repo-lib: pass either 'release' or 'steps' to mkRelease, not both"
-        else if hasStructuredSteps then
-          builtins.map normalizeReleaseStep raw.steps
-        else if hasLegacySteps then
-          builtins.map normalizeReleaseStep raw.release
-        else
-          [ ];
-    in
-    {
-      postVersion = raw.postVersion or "";
-      channels = raw.channels or defaultReleaseChannels;
-      runtimeInputs = (raw.runtimeInputs or [ ]) ++ (raw.extraRuntimeInputs or [ ]);
-      steps = steps;
-    };
-
-  buildShellHook =
-    {
-      hooksShellHook,
-      shellEnvScript,
-      bootstrap,
-      shellBannerScript,
-      extraShellText,
-      toolLabelWidth,
-    }:
-    let
-      template = builtins.readFile shellHookTemplatePath;
-    in
-    builtins.replaceStrings
-      [
-        "@HOOKS_SHELL_HOOK@"
-        "@TOOL_LABEL_WIDTH@"
-        "@SHELL_ENV_SCRIPT@"
-        "@BOOTSTRAP@"
-        "@SHELL_BANNER_SCRIPT@"
-        "@EXTRA_SHELL_TEXT@"
-      ]
-      [
-        hooksShellHook
-        (toString toolLabelWidth)
-        shellEnvScript
-        bootstrap
-        shellBannerScript
-        extraShellText
-      ]
-      template;
-
-  buildShellArtifacts =
-    {
-      pkgs,
-      system,
-      src,
-      includeStandardPackages ? true,
-      formatting,
-      tools ? [ ],
-      shellConfig ? {
-        env = { };
-        extraShellText = "";
-        bootstrap = "";
-        banner = defaultShellBanner;
-      },
-      checkSpecs ? { },
-      rawHookEntries ? { },
-      lefthookConfig ? { },
-      extraPackages ? [ ],
-    }:
-    let
-      standardPackages = with pkgs; [
-        nixfmt
-        gitlint
-        gitleaks
-        shfmt
-      ];
-      toolPackages = lib.filter (pkg: pkg != null) (builtins.map (tool: tool.package or null) tools);
-      selectedStandardPackages = lib.optionals includeStandardPackages standardPackages;
-
-      treefmtEval = treefmt-nix.lib.evalModule pkgs {
-        projectRootFile = "flake.nix";
-        programs = {
-          nixfmt.enable = true;
-        }
-        // formatting.programs;
-        settings.formatter = { } // formatting.settings;
-      };
-      treefmtWrapper = treefmtEval.config.build.wrapper;
-      lefthookBinWrapper = pkgs.writeShellScript "lefthook-dumb-term" ''
-        exec env TERM=dumb ${lib.getExe pkgs.lefthook} "$@"
-      '';
-
-      normalizedLefthookConfig = normalizeLefthookConfig "lefthook config" lefthookConfig;
-      lefthookCheck = lefthookNix.lib.${system}.run {
-        inherit src;
-        config = lib.foldl' lib.recursiveUpdate { } (
-          [
-            {
-              output = [
-                "failure"
-                "summary"
-              ];
-            }
-            (parallelHookStageConfig "pre-commit")
-            (parallelHookStageConfig "pre-push")
-            (lib.setAttrByPath [ "pre-commit" "commands" "treefmt" ] {
-              run = "${treefmtWrapper}/bin/treefmt --no-cache {staged_files}";
-              stage_fixed = true;
-            })
-            (lib.setAttrByPath [ "pre-commit" "commands" "gitleaks" ] {
-              run = "${pkgs.gitleaks}/bin/gitleaks protect --staged";
-            })
-            (lib.setAttrByPath [ "commit-msg" "commands" "gitlint" ] {
-              run = "${pkgs.gitlint}/bin/gitlint --staged --msg-filename {1}";
-            })
-          ]
-          ++ lib.mapAttrsToList (name: check: checkToLefthookConfig pkgs name check) checkSpecs
-          ++ lib.mapAttrsToList hookToLefthookConfig rawHookEntries
-          ++ [ normalizedLefthookConfig ]
-        );
-      };
-      selectedCheckOutputs = {
-        formatting-check = treefmtEval.config.build.check src;
-        hook-check = lefthookCheck;
-        lefthook-check = lefthookCheck;
-      };
-
-      toolNames = builtins.map (tool: tool.name) tools;
-      toolNameWidth =
-        if toolNames == [ ] then
-          0
-        else
-          builtins.foldl' (maxWidth: name: lib.max maxWidth (builtins.stringLength name)) 0 toolNames;
-      toolLabelWidth = toolNameWidth + 1;
-
-      shellEnvScript = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (
-          name: value: "export ${name}=${lib.escapeShellArg (toString value)}"
-        ) shellConfig.env
-      );
-
-      banner = normalizeShellBanner (shellConfig.banner or { });
-
-      shellBannerScript =
-        if banner.style == "pretty" then
-          ''
-            repo_lib_print_pretty_header \
-              ${lib.escapeShellArg banner.borderColor} \
-              ${lib.escapeShellArg banner.titleColor} \
-              ${lib.escapeShellArg banner.icon} \
-              ${lib.escapeShellArg banner.title} \
-              ${lib.escapeShellArg banner.subtitleColor} \
-              ${lib.escapeShellArg banner.subtitle}
-          ''
-          + lib.concatMapStrings (
-            tool:
-            if tool.kind == "strict" then
-              ''
-                repo_lib_print_pretty_tool \
-                  ${lib.escapeShellArg banner.borderColor} \
-                  ${lib.escapeShellArg tool.name} \
-                  ${lib.escapeShellArg tool.banner.color} \
-                  ${lib.escapeShellArg (if tool.banner.icon == null then "" else tool.banner.icon)} \
-                  ${lib.escapeShellArg (if tool.banner.iconColor == null then "" else tool.banner.iconColor)} \
-                  ${lib.escapeShellArg (if tool.required then "1" else "0")} \
-                  ${lib.escapeShellArg (toString tool.version.line)} \
-                  ${lib.escapeShellArg (toString tool.version.group)} \
-                  ${lib.escapeShellArg (if tool.version.regex == null then "" else tool.version.regex)} \
-                  ${lib.escapeShellArg (if tool.version.match == null then "" else tool.version.match)} \
-                  ${lib.escapeShellArg tool.executable} \
-                  ${lib.escapeShellArgs tool.version.args}
-              ''
-            else
-              ''
-                repo_lib_print_pretty_legacy_tool \
-                  ${lib.escapeShellArg banner.borderColor} \
-                  ${lib.escapeShellArg tool.name} \
-                  ${lib.escapeShellArg tool.banner.color} \
-                  ${lib.escapeShellArg (if tool.banner.icon == null then "" else tool.banner.icon)} \
-                  ${lib.escapeShellArg (if tool.banner.iconColor == null then "" else tool.banner.iconColor)} \
-                  ${lib.escapeShellArg (if tool.required then "1" else "0")} \
-                  ${lib.escapeShellArg tool.command} \
-                  ${lib.escapeShellArg tool.versionCommand}
-              ''
-          ) tools
-          + ''
-            repo_lib_print_pretty_footer \
-              ${lib.escapeShellArg banner.borderColor}
-          ''
-        else
-          ''
-            repo_lib_print_simple_header \
-              ${lib.escapeShellArg banner.titleColor} \
-              ${lib.escapeShellArg banner.icon} \
-              ${lib.escapeShellArg banner.title} \
-              ${lib.escapeShellArg banner.subtitleColor} \
-              ${lib.escapeShellArg banner.subtitle}
-          ''
-          + lib.concatMapStrings (
-            tool:
-            if tool.kind == "strict" then
-              ''
-                repo_lib_print_simple_tool \
-                  ${lib.escapeShellArg tool.name} \
-                  ${lib.escapeShellArg tool.banner.color} \
-                  ${lib.escapeShellArg (if tool.banner.icon == null then "" else tool.banner.icon)} \
-                  ${lib.escapeShellArg (if tool.banner.iconColor == null then "" else tool.banner.iconColor)} \
-                  ${lib.escapeShellArg (if tool.required then "1" else "0")} \
-                  ${lib.escapeShellArg (toString tool.version.line)} \
-                  ${lib.escapeShellArg (toString tool.version.group)} \
-                  ${lib.escapeShellArg (if tool.version.regex == null then "" else tool.version.regex)} \
-                  ${lib.escapeShellArg (if tool.version.match == null then "" else tool.version.match)} \
-                  ${lib.escapeShellArg tool.executable} \
-                  ${lib.escapeShellArgs tool.version.args}
-              ''
-            else
-              ''
-                repo_lib_print_simple_legacy_tool \
-                  ${lib.escapeShellArg tool.name} \
-                  ${lib.escapeShellArg tool.banner.color} \
-                  ${lib.escapeShellArg (if tool.banner.icon == null then "" else tool.banner.icon)} \
-                  ${lib.escapeShellArg (if tool.banner.iconColor == null then "" else tool.banner.iconColor)} \
-                  ${lib.escapeShellArg (if tool.required then "1" else "0")} \
-                  ${lib.escapeShellArg tool.command} \
-                  ${lib.escapeShellArg tool.versionCommand}
-              ''
-          ) tools
-          + ''
-            printf "\n"
-          '';
-    in
-    {
-      checks = selectedCheckOutputs;
-      formatter = treefmtWrapper;
-      shell = pkgs.mkShell {
-        LEFTHOOK_BIN = builtins.toString lefthookBinWrapper;
-        packages = lib.unique (
-          selectedStandardPackages
-          ++ extraPackages
-          ++ toolPackages
-          ++ [
-            pkgs.lefthook
-            treefmtWrapper
-          ]
-        );
-        shellHook = buildShellHook {
-          hooksShellHook = lefthookCheck.shellHook;
-          inherit toolLabelWidth shellEnvScript shellBannerScript;
-          bootstrap = shellConfig.bootstrap;
-          extraShellText = shellConfig.extraShellText;
-        };
-      };
-    }
-    // selectedCheckOutputs;
+  toolsModule = import ./lib/tools.nix {
+    lib = common.lib;
+  };
+  hooksModule = import ./lib/hooks.nix {
+    inherit (common) lib sanitizeName;
+  };
+  shellModule = import ./lib/shell.nix {
+    inherit (common)
+      lib
+      ;
+    inherit
+      treefmt-nix
+      lefthookNix
+      shellHookTemplatePath
+      ;
+    inherit (defaults)
+      defaultShellBanner
+      ;
+    inherit normalizeShellBanner;
+    inherit (hooksModule)
+      normalizeLefthookConfig
+      parallelHookStageConfig
+      checkToLefthookConfig
+      hookToLefthookConfig
+      ;
+  };
+  releaseModule = import ./lib/release.nix {
+    inherit (common)
+      lib
+      importPkgs
+      ;
+    inherit
+      nixpkgs
+      releaseScriptPath
+      ;
+    inherit (defaults)
+      defaultReleaseChannels
+      ;
+  };
+  repoModule = import ./lib/repo.nix {
+    inherit
+      flake-parts
+      nixpkgs
+      ;
+    inherit (common)
+      lib
+      importPkgs
+      duplicateStrings
+      mergeUniqueAttrs
+      ;
+    inherit (defaults)
+      supportedSystems
+      defaultReleaseChannels
+      ;
+    inherit (toolsModule)
+      normalizeStrictTool
+      ;
+    inherit (hooksModule)
+      normalizeLefthookConfig
+      ;
+    inherit normalizeShellBanner;
+    inherit (shellModule)
+      buildShellArtifacts
+      ;
+    inherit (releaseModule)
+      mkRelease
+      ;
+  };
 in
-rec {
-  systems = {
-    default = supportedSystems;
-  };
-
-  tools = rec {
-    fromPackage =
-      {
-        name,
-        package,
-        exe ? null,
-        version ? { },
-        banner ? { },
-        required ? true,
-      }:
-      {
-        inherit
-          name
-          package
-          exe
-          version
-          banner
-          required
-          ;
-      };
-
-    fromCommand =
-      {
-        name,
-        command,
-        version ? { },
-        banner ? { },
-        required ? true,
-      }:
-      {
-        inherit
-          name
-          command
-          version
-          banner
-          required
-          ;
-      };
-
-    simple =
-      name: package: args:
-      fromPackage {
-        inherit name package;
-        version.args = args;
-      };
-  };
-
-  normalizeRepoConfig =
-    rawConfig:
-    let
-      merged = lib.recursiveUpdate {
-        includeStandardPackages = true;
-        shell = {
-          env = { };
-          extraShellText = "";
-          allowImpureBootstrap = false;
-          bootstrap = "";
-          banner = { };
-        };
-        formatting = {
-          programs = { };
-          settings = { };
-        };
-        checks = { };
-        lefthook = { };
-        release = null;
-      } rawConfig;
-      release =
-        if merged.release == null then
-          null
-        else
-          {
-            channels = defaultReleaseChannels;
-            steps = [ ];
-            postVersion = "";
-            runtimeInputs = [ ];
-          }
-          // merged.release;
-    in
-    if merged.shell.bootstrap != "" && !merged.shell.allowImpureBootstrap then
-      throw "repo-lib: config.shell.bootstrap requires config.shell.allowImpureBootstrap = true"
-    else
-      merged
-      // {
-        inherit release;
-        shell = merged.shell // {
-          banner = normalizeShellBanner merged.shell.banner;
-        };
-      };
-
-  mkDevShell =
-    {
-      system,
-      src ? ./.,
-      nixpkgsInput ? nixpkgs,
-      extraPackages ? [ ],
-      preToolHook ? "",
-      extraShellHook ? "",
-      additionalHooks ? { },
-      lefthook ? { },
-      tools ? [ ],
-      includeStandardPackages ? true,
-      formatters ? { },
-      formatterSettings ? { },
-      features ? { },
-    }:
-    let
-      pkgs = importPkgs nixpkgsInput system;
-      oxfmtEnabled = features.oxfmt or false;
-      legacyTools = builtins.map (tool: normalizeLegacyTool pkgs tool) tools;
-      duplicateToolNames = duplicateStrings (builtins.map (tool: tool.name) legacyTools);
-      normalizedFormatting = {
-        programs =
-          (lib.optionalAttrs oxfmtEnabled {
-            oxfmt.enable = true;
-          })
-          // formatters;
-        settings = formatterSettings;
-      };
-      shellConfig = {
-        env = { };
-        extraShellText = extraShellHook;
-        allowImpureBootstrap = true;
-        bootstrap = preToolHook;
-        banner = defaultShellBanner;
-      };
-    in
-    if duplicateToolNames != [ ] then
-      throw "repo-lib: duplicate tool names: ${lib.concatStringsSep ", " duplicateToolNames}"
-    else
-      buildShellArtifacts {
-        inherit
-          pkgs
-          system
-          src
-          includeStandardPackages
-          ;
-        formatting = normalizedFormatting;
-        rawHookEntries = additionalHooks;
-        lefthookConfig = lefthook;
-        shellConfig = shellConfig;
-        tools = legacyTools;
-        extraPackages =
-          extraPackages
-          ++ lib.optionals oxfmtEnabled [
-            pkgs.oxfmt
-            pkgs.oxlint
-          ];
-      };
-
-  mkRelease =
-    {
-      system,
-      nixpkgsInput ? nixpkgs,
-      ...
-    }@rawArgs:
-    let
-      pkgs = importPkgs nixpkgsInput system;
-      release = normalizeReleaseConfig rawArgs;
-      channelList = lib.concatStringsSep " " release.channels;
-      releaseStepsScript = lib.concatMapStrings releaseStepScript release.steps;
-      script =
-        builtins.replaceStrings
-          [
-            "__CHANNEL_LIST__"
-            "__RELEASE_STEPS__"
-            "__POST_VERSION__"
-          ]
-          [
-            channelList
-            releaseStepsScript
-            release.postVersion
-          ]
-          (builtins.readFile releaseScriptPath);
-    in
-    pkgs.writeShellApplication {
-      name = "release";
-      runtimeInputs =
-        with pkgs;
-        [
-          git
-          gnugrep
-          gawk
-          gnused
-          coreutils
-          perl
-        ]
-        ++ release.runtimeInputs
-        ++ lib.concatMap (step: step.runtimeInputs or [ ]) release.steps;
-      text = script;
-    };
-
-  mkRepo =
-    {
-      self,
-      nixpkgs,
-      src ? ./.,
-      systems ? supportedSystems,
-      config ? { },
-      perSystem ? (
-        {
-          pkgs,
-          system,
-          lib,
-          config,
-        }:
-        { }
-      ),
-    }:
-    let
-      normalizedConfig = normalizeRepoConfig config;
-      systemResults = lib.genAttrs systems (
-        system:
-        let
-          pkgs = importPkgs nixpkgs system;
-          perSystemResult = {
-            tools = [ ];
-            shell = { };
-            checks = { };
-            lefthook = { };
-            packages = { };
-            apps = { };
-          }
-          // perSystem {
-            inherit pkgs system;
-            lib = nixpkgs.lib;
-            config = normalizedConfig;
-          };
-
-          strictTools = builtins.map (tool: normalizeStrictTool pkgs tool) perSystemResult.tools;
-          duplicateToolNames = duplicateStrings (builtins.map (tool: tool.name) strictTools);
-          mergedChecks = mergeUniqueAttrs "check" normalizedConfig.checks perSystemResult.checks;
-          mergedLefthookConfig =
-            lib.recursiveUpdate (normalizeLefthookConfig "config.lefthook" normalizedConfig.lefthook)
-              (normalizeLefthookConfig "perSystem.lefthook" (perSystemResult.lefthook or { }));
-          shellConfig = lib.recursiveUpdate normalizedConfig.shell (perSystemResult.shell or { });
-          env =
-            if duplicateToolNames != [ ] then
-              throw "repo-lib: duplicate tool names: ${lib.concatStringsSep ", " duplicateToolNames}"
-            else
-              buildShellArtifacts {
-                inherit
-                  pkgs
-                  system
-                  src
-                  ;
-                includeStandardPackages = normalizedConfig.includeStandardPackages;
-                formatting = normalizedConfig.formatting;
-                tools = strictTools;
-                checkSpecs = mergedChecks;
-                lefthookConfig = mergedLefthookConfig;
-                shellConfig = shellConfig;
-                extraPackages = perSystemResult.shell.packages or [ ];
-              };
-
-          releasePackages =
-            if normalizedConfig.release == null then
-              { }
-            else
-              {
-                release = mkRelease {
-                  inherit system;
-                  nixpkgsInput = nixpkgs;
-                  channels = normalizedConfig.release.channels;
-                  steps = normalizedConfig.release.steps;
-                  postVersion = normalizedConfig.release.postVersion;
-                  runtimeInputs = normalizedConfig.release.runtimeInputs;
-                };
-              };
-        in
-        {
-          inherit env;
-          packages = mergeUniqueAttrs "package" releasePackages perSystemResult.packages;
-          apps = perSystemResult.apps;
-        }
-      );
-    in
-    {
-      devShells = lib.genAttrs systems (system: {
-        default = systemResults.${system}.env.shell;
-      });
-
-      checks = lib.genAttrs systems (system: systemResults.${system}.env.checks);
-
-      formatter = lib.genAttrs systems (system: systemResults.${system}.env.formatter);
-      packages = lib.genAttrs systems (system: systemResults.${system}.packages);
-      apps = lib.genAttrs systems (system: systemResults.${system}.apps);
-    };
+{
+  systems.default = defaults.supportedSystems;
+  inherit (toolsModule) tools;
+  inherit (repoModule) normalizeRepoConfig mkRepo;
+  inherit (releaseModule) mkRelease;
 }

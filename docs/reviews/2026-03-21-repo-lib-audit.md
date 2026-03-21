@@ -1,0 +1,292 @@
+# Repo-Lib Audit
+
+Date: 2026-03-21
+
+## Direct Answers
+
+### 1. Does it work today?
+
+Partially.
+
+- `nix flake show --all-systems` succeeds from the repo root.
+- Before this audit, `nix flake check` failed because the old shell-based release test harness relied on a brittle regex over `nix derivation show` internals instead of asserting against stable JSON structure.
+- `mkRepo`, the template flake, the dev shell, and the formatter/check outputs all evaluate. The primary failure was test-harness fragility, not a clear functional break in the library itself.
+- The release path still carries real operational risk because [`packages/release/release.sh`](../../../packages/release/release.sh) combines mutation, formatting, commit, tag, and push in one command and uses destructive rollback.
+
+### 2. Is the code organization maintainable?
+
+Not in its current shape.
+
+- [`packages/repo-lib/lib.nix`](../../../packages/repo-lib/lib.nix) is a single 879-line module that owns unrelated concerns:
+  - tool schema normalization
+  - hook/check config synthesis
+  - shell banner generation
+  - release step normalization
+  - public API assembly
+- [`packages/repo-lib/shell-hook.sh`](../../../packages/repo-lib/shell-hook.sh) is not just presentation. It contains tool probing, parsing, error handling, and shell-failure behavior.
+- `mkDevShell` and `mkRepo` overlap conceptually and preserve legacy paths that make the main implementation harder to reason about.
+
+### 3. Is the public API readable and usable for consumers?
+
+Usable, but underspecified and harder to learn than the README suggests.
+
+- [`README.md`](../../../README.md) presents `mkRepo` as a compact abstraction, but the real behavior is distributed across `lib.nix`, `shell-hook.sh`, generated Lefthook config, and the release script.
+- The boundaries between `config`, `perSystem`, `checks`, `lefthook`, `shell`, `tools`, and `release` are not obvious from the docs alone.
+- Raw `config.lefthook` / `perSystem.lefthook` passthrough is effectively required for advanced use, which means the higher-level `checks` abstraction is incomplete.
+
+### 4. Which parts should be kept, split, or replaced?
+
+Keep:
+
+- the high-level `mkRepo` consumer entrypoint, if compatibility matters
+- the template
+- the structured release-step idea
+
+Split:
+
+- release tooling from repo shell/hook wiring
+- shell banner rendering from shell/package assembly
+- hook/check generation from the rest of `mkRepo`
+
+Replace:
+
+- custom flake output composition with `flake-parts`
+- custom hook glue with `lefthook.nix`
+- keep `treefmt-nix` as the formatting layer rather than wrapping it deeper
+
+### 5. What is the lowest-complexity target architecture?
+
+Option A: keep `repo-lib.lib.mkRepo` as a thin compatibility wrapper, but rebase its internals on established components:
+
+- `flake-parts` for flake structure and `perSystem`
+- `treefmt-nix` for formatting
+- `lefthook.nix` for hooks
+- a separate `mkRelease` package for release automation, with explicit opt-ins for commit/tag/push
+
+That preserves migration cost for consumers while removing most of the custom orchestration burden from this repo.
+
+## Correctness Findings
+
+### High: self-checks were failing because the test harness depended on unstable derivation internals
+
+Files:
+
+- the removed shell-based release test harness
+
+Details:
+
+- The repo did not pass `nix flake check` on the host system before this audit because the tests around `lefthook-check` assumed `nix derivation show` would expose `"/nix/store/...-lefthook.yml.drv"` as a quoted string.
+- Current Nix emits input derivations in a different JSON shape, so the regex broke even though the underlying derivation still existed.
+- This is a release blocker because the repo’s own baseline was red.
+
+Assessment:
+
+- Fixed in this audit by replacing the ad hoc scrape with a helper that locates the relevant input derivation from the JSON more defensibly.
+
+### High: release rollback is destructive
+
+Files:
+
+- [`packages/release/release.sh`](../../../packages/release/release.sh)
+
+Details:
+
+- `revert_on_failure` runs `git reset --hard "$START_HEAD"` after any trapped error.
+- That will discard all working tree changes created during the release flow, including user-visible file changes that might be useful for debugging or manual recovery.
+
+Assessment:
+
+- This is too aggressive for a library-provided command.
+- Rollback should be opt-in, staged to a temp branch/worktree, or replaced with a safer failure mode that leaves artifacts visible.
+
+### Medium: release performs too many side effects in one irreversible flow
+
+Files:
+
+- [`packages/release/release.sh`](../../../packages/release/release.sh)
+
+Details:
+
+- The default flow updates version state, runs release steps, formats, stages, commits, tags, and pushes.
+- There is no dry-run mode.
+- There is no `--no-push`, `--no-tag`, or `--no-commit` mode.
+- The command is framed as a package generated by the library, so consumers inherit a strong opinionated workflow whether they want it or not.
+
+Assessment:
+
+- Release should be separated from repo shell wiring and broken into explicit phases or flags.
+
+## Organization And Readability Findings
+
+### High: `lib.nix` is a monolith
+
+Files:
+
+- [`packages/repo-lib/lib.nix`](../../../packages/repo-lib/lib.nix)
+
+Details:
+
+- One file owns normalization helpers, shell assembly, banner formatting inputs, Lefthook synthesis, release templating, compatibility APIs, and top-level outputs.
+- The public API is therefore not separable from its implementation detail.
+
+Assessment:
+
+- This is the main maintainability problem in the repo.
+- Even if behavior is mostly correct, the cost of safely changing it is too high.
+
+### Medium: shell UX logic is coupled to operational behavior
+
+Files:
+
+- [`packages/repo-lib/shell-hook.sh`](../../../packages/repo-lib/shell-hook.sh)
+- [`packages/repo-lib/lib.nix`](../../../packages/repo-lib/lib.nix)
+
+Details:
+
+- Tool banners do more than render text. They probe commands, parse versions, print failures, and may exit the shell startup for required tools.
+- That behavior is not obvious from the README example and is spread across generated shell script fragments.
+
+Assessment:
+
+- The banner feature is nice, but it is expensive in complexity and debugging surface relative to the value it adds.
+- If retained, it should be optional and isolated behind a smaller interface.
+
+### Medium: legacy compatibility paths dominate the core implementation
+
+Files:
+
+- [`packages/repo-lib/lib.nix`](../../../packages/repo-lib/lib.nix)
+
+Details:
+
+- `mkDevShell` uses legacy tool normalization and its own feature toggles.
+- `mkRepo` carries a newer strict tool shape.
+- Both flows feed the same shell-artifact builder, which means the common implementation has to keep both mental models alive.
+
+Assessment:
+
+- Deprecate `mkDevShell` once a thin `mkRepo` wrapper exists over standard components.
+
+## Public API And Usability Findings
+
+### High: README underspecifies the real API
+
+Files:
+
+- [`README.md`](../../../README.md)
+
+Details:
+
+- The README explains the happy-path shape of `mkRepo`, but not the actual behavioral contract.
+- It does not provide a reference for:
+  - tool spec fields
+  - shell banner behavior
+  - exact merge order between `config` and `perSystem`
+  - what the `checks` abstraction cannot express
+  - what `release` is allowed to mutate by default
+
+Assessment:
+
+- Consumers can start quickly, but they cannot predict behavior well without reading the implementation.
+
+### Medium: abstraction boundaries are blurry
+
+Files:
+
+- [`README.md`](../../../README.md)
+- [`template/flake.nix`](../../../template/flake.nix)
+- [`packages/repo-lib/lib.nix`](../../../packages/repo-lib/lib.nix)
+
+Details:
+
+- `checks` looks like the high-level hook API, but advanced usage requires raw Lefthook passthrough.
+- `shell.bootstrap` is documented as the purity escape hatch, but the template uses it for tool bootstrapping and operational setup.
+- `release` is presented as optional packaging, but it is operational automation with repo mutation and remote side effects.
+
+Assessment:
+
+- These concepts should be separate modules with narrower contracts.
+
+## Replacement Options
+
+### Option A: thin compatibility layer
+
+Keep `repo-lib.lib.mkRepo`, but make it a wrapper over standard components.
+
+Use:
+
+- `flake-parts` for top-level flake assembly and `perSystem`
+- `treefmt-nix` for formatting
+- `lefthook.nix` for Git hooks
+- a standalone `mkRelease` output for release automation
+
+Pros:
+
+- lower migration cost
+- preserves existing entrypoint
+- reduces bespoke glue
+
+Cons:
+
+- some compatibility debt remains
+- requires a staged migration plan
+
+### Option B: full replacement
+
+Stop positioning this as a general-purpose Nix library and keep only:
+
+- the template
+- any repo-specific release helper
+- migration docs to standard tools
+
+Pros:
+
+- lowest long-term maintenance burden
+- clearest product boundary
+
+Cons:
+
+- highest consumer migration cost
+- discards the existing `mkRepo` API
+
+## Final Recommendation
+
+Choose **Option A**.
+
+Rationale:
+
+- `mkRepo` has enough consumer value to keep as a compatibility surface.
+- Most of the complexity is not unique value. It is custom orchestration around capabilities already provided by better-maintained ecosystem tools.
+- The release flow should be split out regardless of which option is chosen.
+
+Concrete target:
+
+1. Rebase flake structure on `flake-parts`.
+2. Replace custom hook synthesis with `lefthook.nix`.
+3. Keep `treefmt-nix` directly exposed instead of deeply wrapped.
+4. Make shell banners optional or move them behind a very small isolated module.
+5. Move release automation into a separate package with explicit side-effect flags.
+6. Mark `mkDevShell` deprecated once `mkRepo` is stable on the new internals.
+
+## Migration Cost And Compatibility Notes
+
+- A thin compatibility wrapper keeps consumer migration reasonable.
+- The biggest compatibility risk is release behavior, because some consumers may depend on the current commit/tag/push flow.
+- Introduce safer release behavior behind new flags first, then deprecate the old all-in-one default.
+- Keep template output working during the transition; it is currently the clearest example of intended usage.
+
+## Required Validation For Follow-Up Work
+
+- `nix flake show --all-systems`
+- `nix flake check`
+- minimal consumer repo using `mkRepo`
+- template repo evaluation
+- release smoke test in a temporary git repo
+- hook assertions that do not depend on private derivation naming/layout
+
+## Sources
+
+- `flake-parts`: https://flake.parts/
+- `treefmt-nix`: https://github.com/numtide/treefmt-nix
+- `lefthook.nix`: https://github.com/cachix/lefthook.nix
+- `devenv`: https://github.com/cachix/devenv

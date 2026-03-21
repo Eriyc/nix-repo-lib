@@ -1,4 +1,5 @@
 {
+  flake-parts,
   nixpkgs,
   treefmt-nix,
   lefthookNix,
@@ -7,6 +8,7 @@
 }:
 import ../repo-lib/lib.nix {
   inherit
+    flake-parts
     nixpkgs
     treefmt-nix
     lefthookNix
