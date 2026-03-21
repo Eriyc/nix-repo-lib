@@ -109,46 +109,49 @@
             })
           ];
 
-          shell.packages = [
-            self.packages.${system}.release
-            pkgs.bun
-            pkgs.openbao
-            pkgs.oxfmt
-            pkgs.oxlint
-          ];
-
-          checks.format = {
-            command = "oxfmt --check .";
-            stage = "pre-commit";
-            passFilenames = false;
-            runtimeInputs = [ pkgs.oxfmt ];
-          };
-
-          checks.typecheck = {
-            command = "bun run typecheck";
-            stage = "pre-push";
-            passFilenames = false;
-            runtimeInputs = [ pkgs.bun ];
-          };
-
-          checks.env-check = {
-            command = "bun run env:check";
-            stage = "pre-push";
-            passFilenames = false;
-            runtimeInputs = [
-              pkgs.bun
+          shell = {
+            packages = [
+              self.packages.${system}.release
               pkgs.openbao
+              pkgs.oxfmt
+              pkgs.oxlint
             ];
           };
 
-          checks.env-scan = {
-            command = "bun run env:scan";
-            stage = "pre-commit";
-            passFilenames = false;
-            runtimeInputs = [
-              pkgs.bun
-              pkgs.openbao
-            ];
+          checks = {
+            format = {
+              command = "oxfmt --check .";
+              stage = "pre-commit";
+              passFilenames = false;
+              runtimeInputs = [ pkgs.oxfmt ];
+            };
+
+            typecheck = {
+              command = "bun run typecheck";
+              stage = "pre-push";
+              passFilenames = false;
+              runtimeInputs = [ pkgs.bun ];
+            };
+
+            env-check = {
+              command = "bun run env:check";
+              stage = "pre-push";
+              passFilenames = false;
+              runtimeInputs = [
+                pkgs.bun
+                pkgs.openbao
+              ];
+            };
+
+            env-scan = {
+              command = "bun run env:scan";
+              stage = "pre-commit";
+              passFilenames = false;
+              runtimeInputs = [
+                pkgs.bun
+                pkgs.openbao
+              ];
+            };
           };
         };
     };

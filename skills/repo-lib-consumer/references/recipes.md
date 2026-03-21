@@ -7,18 +7,22 @@ Edit `perSystem.tools` in the consuming repo:
 ```nix
 tools = [
   (repo-lib.lib.tools.fromPackage {
-    name = "Go";
-    package = pkgs.go;
-    version.args = [ "version" ];
-    banner.color = "CYAN";
+    name = "Bun";
+    package = pkgs.bun;
+    version.args = [ "--version" ];
+    banner = {
+      color = "YELLOW";
+      icon = "";
+    };
   })
 ];
 ```
 
 Notes:
 
-- Do not also add `pkgs.go` to `shell.packages`; `tools` already adds it.
-- Use `exe = "name"` only when the package exposes multiple binaries or the main program is not the desired one.
+- Do not also add the same package to `shell.packages`; `tools` already adds package-backed tools to the shell.
+- Use `exe = "name"` only when the package exposes multiple binaries or the default binary is not the right one.
+- Use `fromCommand` when the executable should come from the host environment instead of `nixpkgs`.
 
 ## Add a non-banner package to the shell
 
@@ -37,16 +41,38 @@ Use this for:
 - internal scripts
 - the generated `release` package itself
 
-## Add a test phase or lint hook
+## Customize the shell banner
 
-For a simple global check:
+Use `config.shell.banner`:
 
 ```nix
-config.checks.tests = {
-  command = "go test ./...";
+config.shell.banner = {
+  style = "pretty";
+  icon = "☾";
+  title = "Moonrepo shell ready";
+  titleColor = "GREEN";
+  subtitle = "Bun + TypeScript + Varlock";
+  subtitleColor = "GRAY";
+  borderColor = "BLUE";
+};
+```
+
+Guidance:
+
+- Use `style = "pretty"` when the repo already has a styled shell banner.
+- Keep icons and colors consistent with the repo's current shell UX.
+- Remember that required tool probe failures will still abort shell startup.
+
+## Add a test phase or lint hook
+
+For a simple shared check:
+
+```nix
+config.checks.typecheck = {
+  command = "bun run typecheck";
   stage = "pre-push";
   passFilenames = false;
-  runtimeInputs = [ pkgs.go ];
+  runtimeInputs = [ pkgs.bun ];
 };
 ```
 
@@ -54,19 +80,43 @@ For a system-specific check:
 
 ```nix
 perSystem = { pkgs, ... }: {
-  checks.lint = {
-    command = "bun test";
-    stage = "pre-push";
-    runtimeInputs = [ pkgs.bun ];
+  checks.format = {
+    command = "oxfmt --check .";
+    stage = "pre-commit";
+    passFilenames = false;
+    runtimeInputs = [ pkgs.oxfmt ];
   };
 };
 ```
 
 Guidance:
 
-- Use `pre-commit` for fast format/lint work.
+- Use `pre-commit` for fast format or lint work.
 - Use `pre-push` for slower test suites.
 - Prefer `runtimeInputs` over inline absolute paths when the command needs extra CLIs.
+
+## Add a `commit-msg` hook
+
+`config.checks` cannot target `commit-msg`. Use raw Lefthook config:
+
+```nix
+config.lefthook.commit-msg.commands.gitlint = {
+  run = "${pkgs.gitlint}/bin/gitlint --staged --msg-filename {1}";
+  stage_fixed = true;
+};
+```
+
+Or use a structured hook entry:
+
+```nix
+perSystem = { pkgs, ... }: {
+  lefthook.commitlint = {
+    entry = "${pkgs.nodejs}/bin/node scripts/commitlint.mjs";
+    pass_filenames = true;
+    stages = [ "commit-msg" ];
+  };
+};
+```
 
 ## Add or change formatters
 
@@ -76,11 +126,12 @@ Use `config.formatting`:
 config.formatting = {
   programs = {
     shfmt.enable = true;
-    gofmt.enable = true;
+    oxfmt.enable = true;
   };
 
   settings = {
     shfmt.options = [ "-i" "2" "-s" "-w" ];
+    oxfmt.excludes = [ "*.md" "*.yml" ];
   };
 };
 ```
@@ -116,31 +167,27 @@ config.release.steps = [
 ];
 ```
 
-## Add a webhook during release
-
-If the webhook may run before commit and tag creation, use a `run` step or `postVersion`.
-
-Use a `run` step when it belongs with other release mutations:
+Update metadata inside `VERSION`:
 
 ```nix
-config.release = {
-  runtimeInputs = [ pkgs.curl ];
-  steps = [
-    {
-      run = {
-        script = ''
-          curl -fsS https://example.invalid/release-hook \
-            -H 'content-type: application/json' \
-            -d '{"version":"'"$FULL_VERSION"'"}'
-        '';
-        runtimeInputs = [ pkgs.curl ];
-      };
-    }
-  ];
-};
+config.release.steps = [
+  {
+    versionMetaSet = {
+      key = "desktop_binary_version_max";
+      value = "$FULL_VERSION";
+    };
+  }
+  {
+    versionMetaUnset = {
+      key = "desktop_unused";
+    };
+  }
+];
 ```
 
-Use `postVersion` when the action should happen after all `steps`:
+## Add a webhook during release
+
+Current `repo-lib` does not expose a `run` release step. If the action must happen during local release execution, put it in `postVersion`:
 
 ```nix
 config.release.postVersion = ''
@@ -153,8 +200,8 @@ config.release.runtimeInputs = [ pkgs.curl ];
 
 Important:
 
-- Both of these still run before commit, tag, and push.
-- They are not true post-tag hooks.
+- `postVersion` still runs before `nix fmt`, commit, tag, and push.
+- This is not a true post-tag hook.
 
 ## Add a true post-tag webhook
 
@@ -162,11 +209,11 @@ Do not fake this with `postVersion`.
 
 Preferred approach in the consuming repo:
 
-1. Keep local release generation in `repo-lib`.
-2. Add CI triggered by tag push.
-3. Put the webhook call in CI, where the tag is already created and pushed.
+1. Keep local version generation in `repo-lib`.
+2. Trigger CI from tag push.
+3. Put the webhook call in CI, where the tag already exists remotely.
 
-Only change `repo-lib` itself if the user explicitly asks for a new local post-tag capability.
+Only change `repo-lib` itself if the user explicitly asks for a new library capability.
 
 ## Add impure bootstrap work
 
@@ -175,8 +222,9 @@ Only do this when the user actually wants imperative shell setup:
 ```nix
 config.shell = {
   bootstrap = ''
-    export GOBIN="$PWD/.tools/bin"
-    export PATH="$GOBIN:$PATH"
+    export BUN_INSTALL_GLOBAL_DIR="$PWD/.tools/bun/install/global"
+    export BUN_INSTALL_BIN="$PWD/.tools/bun/bin"
+    export PATH="$BUN_INSTALL_BIN:$PATH"
   '';
   allowImpureBootstrap = true;
 };
@@ -184,14 +232,14 @@ config.shell = {
 
 Do not add bootstrap work for normal Nix-packaged tools.
 
-## Migrate a legacy consumer to `mkRepo`
+## Move from direct `mkRelease` to `mkRepo`
 
 Only do this if requested.
 
 Migration outline:
 
-1. Move repeated shell/check/formatter config into `config`.
-2. Move old banner tools into `perSystem.tools`.
-3. Move extra shell packages into `perSystem.shell.packages`.
-4. Replace old `mkRelease { release = [ ... ]; }` with `config.release.steps`.
+1. Move release package config into `config.release`.
+2. Move shell setup into `config.shell` and `perSystem.shell.packages`.
+3. Move bannered CLIs into `perSystem.tools`.
+4. Move hook commands into `config.checks` or raw `lefthook`.
 5. Keep behavior the same first; do not redesign the repo in the same change unless asked.

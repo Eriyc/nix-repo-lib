@@ -1,4 +1,4 @@
 interface:
   display_name: "Repo Lib Consumer"
-  short_description: "Edit repos that use repo-lib safely"
-  default_prompt: "Use $repo-lib-consumer to update a repo that consumes repo-lib."
+  short_description: "Edit mkRepo or mkRelease consumers safely"
+  default_prompt: "Use $repo-lib-consumer to update a repo that consumes repo-lib through mkRepo, mkRelease, or the repo-lib template."
